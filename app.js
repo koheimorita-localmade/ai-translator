@@ -1,5 +1,5 @@
 // ========================================
-// AI翻訳 - Gemini Translation App
+// AI翻訳 - Gemini Translation App v3
 // ========================================
 
 const LANG_NAMES = {
@@ -8,6 +8,8 @@ const LANG_NAMES = {
     en: "English",
     zh: "中文 (中国語)",
     ko: "한국어 (韓国語)",
+    tl: "Tagalog (タガログ語)",
+    id: "Indonesia (インドネシア語)",
     es: "Español (スペイン語)",
     fr: "Français (フランス語)",
     de: "Deutsch (ドイツ語)",
@@ -18,42 +20,23 @@ const LANG_NAMES = {
 };
 
 const LANG_SHORT = {
-    auto: "自動",
-    ja: "日本語",
-    en: "EN",
-    zh: "中文",
-    ko: "韓国語",
-    es: "ES",
-    fr: "FR",
-    de: "DE",
-    pt: "PT",
-    th: "TH",
-    vi: "VI",
-    ar: "AR",
+    auto: "自動", ja: "日本語", en: "EN", zh: "中文", ko: "韓国語",
+    tl: "タガログ", id: "インドネシア",
+    es: "ES", fr: "FR", de: "DE", pt: "PT", th: "TH", vi: "VI", ar: "AR",
 };
 
-// TTS language codes
 const LANG_TTS = {
-    ja: "ja-JP",
-    en: "en-US",
-    zh: "zh-CN",
-    ko: "ko-KR",
-    es: "es-ES",
-    fr: "fr-FR",
-    de: "de-DE",
-    pt: "pt-BR",
-    th: "th-TH",
-    vi: "vi-VN",
-    ar: "ar-SA",
+    ja: "ja-JP", en: "en-US", zh: "zh-CN", ko: "ko-KR",
+    tl: "fil-PH", id: "id-ID",
+    es: "es-ES", fr: "fr-FR", de: "de-DE", pt: "pt-BR",
+    th: "th-TH", vi: "vi-VN", ar: "ar-SA",
 };
 
 const GEMINI_MODEL = "gemini-2.5-flash";
 const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 const STORAGE_KEY_API = "gemini_api_key";
-const STORAGE_KEY_HISTORY = "translation_history";
 const STORAGE_KEY_FAVORITES = "favorite_languages";
-const MAX_HISTORY = 20;
-const DEFAULT_FAVORITES = ["en", "zh", "ko", "fr"];
+const DEFAULT_FAVORITES = ["en", "zh", "ko", "tl", "id"];
 
 // ---- DOM Elements ----
 const sourceText = document.getElementById("source-text");
@@ -77,9 +60,6 @@ const apiKeyInput = document.getElementById("api-key");
 const toggleKeyBtn = document.getElementById("toggle-key");
 const saveKeyBtn = document.getElementById("save-key");
 const keyStatus = document.getElementById("key-status");
-const historyContainer = document.getElementById("history-container");
-const historyList = document.getElementById("history-list");
-const clearHistoryBtn = document.getElementById("clear-history-btn");
 const favoritesList = document.getElementById("favorites-list");
 const editFavoritesBtn = document.getElementById("edit-favorites-btn");
 const favoritesModal = document.getElementById("favorites-modal");
@@ -87,18 +67,28 @@ const closeFavorites = document.getElementById("close-favorites");
 const favoritesEditor = document.getElementById("favorites-editor");
 const uploadBtn = document.getElementById("upload-btn");
 const fileInput = document.getElementById("file-input");
+const cameraBtn = document.getElementById("camera-btn");
+const cameraInput = document.getElementById("camera-input");
 const micBtn = document.getElementById("mic-btn");
+const learningSection = document.getElementById("learning-section");
+const learningNotes = document.getElementById("learning-notes");
+const styleTabs = document.querySelectorAll(".style-tab");
 
 // ---- State ----
 let isTranslating = false;
 let recognition = null;
 let isRecording = false;
-let currentTargetLang = null; // tracks the resolved target language for TTS
+let currentTargetLang = null;
+
+// Translation cache: { normal, casual, formal, notes }
+let translationCache = { normal: "", casual: "", formal: "", notes: "" };
+let activeStyle = "normal";
+let lastSourceText = "";
+let lastTargetLang = "";
 
 // ---- Init ----
 function init() {
     loadApiKey();
-    loadHistory();
     loadFavorites();
     bindEvents();
     updateTranslateButton();
@@ -112,6 +102,11 @@ function bindEvents() {
     clearBtn.addEventListener("click", clearInput);
     speakBtn.addEventListener("click", speakResult);
 
+    // Style tabs
+    styleTabs.forEach((tab) => {
+        tab.addEventListener("click", () => switchStyle(tab.dataset.style));
+    });
+
     // Settings
     settingsBtn.addEventListener("click", openSettings);
     closeSettings.addEventListener("click", closeSettingsModal);
@@ -122,22 +117,23 @@ function bindEvents() {
         if (e.key === "Enter") saveApiKey();
     });
 
-    // History
-    clearHistoryBtn.addEventListener("click", clearHistory);
-
     // Favorites
     editFavoritesBtn.addEventListener("click", openFavoritesEditor);
     closeFavorites.addEventListener("click", closeFavoritesModal);
     favoritesModal.querySelector(".modal-backdrop").addEventListener("click", closeFavoritesModal);
 
-    // File upload
+    // File upload — on mobile, this shows the system picker (files + photos + camera)
     uploadBtn.addEventListener("click", () => fileInput.click());
     fileInput.addEventListener("change", handleFileUpload);
+
+    // Dedicated camera button
+    cameraBtn.addEventListener("click", () => cameraInput.click());
+    cameraInput.addEventListener("change", handleImageUpload);
 
     // Microphone
     micBtn.addEventListener("click", toggleMicrophone);
 
-    // Keyboard shortcut: Ctrl/Cmd + Enter to translate
+    // Keyboard shortcut
     sourceText.addEventListener("keydown", (e) => {
         if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
             e.preventDefault();
@@ -158,6 +154,7 @@ function clearInput() {
     sourceText.value = "";
     onSourceInput();
     resultContainer.style.display = "none";
+    translationCache = { normal: "", casual: "", formal: "", notes: "" };
     sourceText.focus();
 }
 
@@ -174,9 +171,7 @@ function isJapaneseText(text) {
 }
 
 function resolveTargetLanguage(text) {
-    if (targetLang.value !== "auto") {
-        return targetLang.value;
-    }
+    if (targetLang.value !== "auto") return targetLang.value;
     return isJapaneseText(text) ? "en" : "ja";
 }
 
@@ -194,12 +189,63 @@ function swapLanguages() {
     sourceLang.value = targetLang.value;
     targetLang.value = temp;
     updateFavoritesHighlight();
+}
 
-    if (resultText.textContent && resultContainer.style.display !== "none") {
-        const tempText = sourceText.value;
-        sourceText.value = resultText.textContent;
-        resultText.textContent = tempText;
-        onSourceInput();
+// ---- Style Tabs ----
+function switchStyle(style) {
+    activeStyle = style;
+    styleTabs.forEach((t) => t.classList.toggle("active", t.dataset.style === style));
+
+    // If we already have the translation cached, show it
+    if (translationCache[style]) {
+        resultText.textContent = translationCache[style];
+        return;
+    }
+
+    // Otherwise, fetch this style
+    if (lastSourceText && lastTargetLang) {
+        fetchSingleStyle(style, lastSourceText, lastTargetLang);
+    }
+}
+
+async function fetchSingleStyle(style, text, tgtLang) {
+    const apiKey = getApiKey();
+    if (!apiKey || !text) return;
+
+    const tab = document.querySelector(`.style-tab[data-style="${style}"]`);
+    tab.classList.add("loading");
+    resultText.textContent = "翻訳中...";
+
+    try {
+        const tgtName = LANG_NAMES[tgtLang] || tgtLang;
+        const srcLang = sourceLang.value;
+        const srcName = LANG_NAMES[srcLang] || srcLang;
+
+        const styleDesc = {
+            normal: "standard/literal translation",
+            casual: "casual, colloquial, friendly tone",
+            formal: "formal, polite, business-appropriate tone",
+        }[style];
+
+        const langContext = srcLang === "auto"
+            ? `Translate the following text to ${tgtName}`
+            : `Translate the following text from ${srcName} to ${tgtName}`;
+
+        const prompt = `${langContext} using a ${styleDesc}. Output ONLY the translated text, nothing else.\n\n${text}`;
+
+        const translated = await callGemini(apiKey, prompt);
+        translationCache[style] = translated;
+
+        if (activeStyle === style) {
+            resultText.textContent = translated;
+        }
+    } catch (error) {
+        if (activeStyle === style) {
+            resultText.textContent = "";
+        }
+        showToast(error.message || "翻訳に失敗しました");
+    } finally {
+        tab.classList.remove("loading");
     }
 }
 
@@ -209,70 +255,96 @@ async function handleTranslate() {
     if (!text || isTranslating) return;
 
     const apiKey = getApiKey();
-    if (!apiKey) {
-        openSettings();
-        return;
-    }
+    if (!apiKey) { openSettings(); return; }
+
+    const tgtLang = resolveTargetLanguage(text);
+    currentTargetLang = tgtLang;
+    lastSourceText = text;
+    lastTargetLang = tgtLang;
+
+    // Reset cache
+    translationCache = { normal: "", casual: "", formal: "", notes: "" };
+    activeStyle = "normal";
+    styleTabs.forEach((t) => t.classList.toggle("active", t.dataset.style === "normal"));
 
     setLoading(true);
+    resultContainer.style.display = "block";
+    resultText.textContent = "";
+    learningSection.style.display = "none";
+
+    const tgtName = LANG_NAMES[tgtLang] || tgtLang;
+    resultLang.textContent = tgtName;
 
     try {
         const srcLang = sourceLang.value;
-        const tgtLang = resolveTargetLanguage(text);
-        currentTargetLang = tgtLang;
         const srcName = LANG_NAMES[srcLang] || srcLang;
-        const tgtName = LANG_NAMES[tgtLang] || tgtLang;
+        const langContext = srcLang === "auto"
+            ? `the following text to ${tgtName}`
+            : `the following text from ${srcName} to ${tgtName}`;
 
-        let prompt;
-        if (srcLang === "auto") {
-            prompt = `Translate the following text to ${tgtName}. Output ONLY the translated text, nothing else. No explanations, no notes.\n\n${text}`;
-        } else {
-            prompt = `Translate the following text from ${srcName} to ${tgtName}. Output ONLY the translated text, nothing else. No explanations, no notes.\n\n${text}`;
+        // Fetch all 3 styles + learning notes in a single API call
+        const prompt = `You are a professional translator and language tutor.
+
+Translate ${langContext} in 3 styles, then provide brief learning notes.
+
+Respond in this exact JSON format (no markdown code fences):
+{
+  "normal": "standard/literal translation here",
+  "casual": "casual, colloquial, friendly translation here",
+  "formal": "formal, polite, business translation here",
+  "notes": "2-3 brief learning tips in Japanese for a language learner. Cover key vocabulary, grammar points, or cultural nuances. Use HTML: <p> for paragraphs, <strong> for important terms."
+}
+
+Text to translate:
+${text}`;
+
+        const raw = await callGemini(apiKey, prompt);
+
+        // Parse JSON — strip markdown fences if present
+        const jsonStr = raw.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+        const parsed = JSON.parse(jsonStr);
+
+        translationCache.normal = parsed.normal || "";
+        translationCache.casual = parsed.casual || "";
+        translationCache.formal = parsed.formal || "";
+        translationCache.notes = parsed.notes || "";
+
+        resultText.textContent = translationCache[activeStyle] || translationCache.normal;
+
+        if (translationCache.notes) {
+            learningNotes.innerHTML = translationCache.notes;
+            learningSection.style.display = "block";
         }
-
-        const response = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                contents: [{ parts: [{ text: prompt }] }],
-                generationConfig: {
-                    temperature: 0.2,
-                    maxOutputTokens: 4096,
-                },
-            }),
-        });
-
-        if (!response.ok) {
-            const errData = await response.json().catch(() => null);
-            if (response.status === 400 || response.status === 403) {
-                throw new Error("APIキーが無効です。設定を確認してください。");
-            }
-            throw new Error(errData?.error?.message || `APIエラー (${response.status})`);
-        }
-
-        const data = await response.json();
-        const translated = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-
-        if (!translated) {
-            throw new Error("翻訳結果を取得できませんでした。");
-        }
-
-        resultText.textContent = translated;
-        resultLang.textContent = tgtName;
-        resultContainer.style.display = "block";
-
-        addToHistory({
-            source: text,
-            result: translated,
-            srcLang: srcLang === "auto" ? "auto" : srcLang,
-            tgtLang,
-            timestamp: Date.now(),
-        });
     } catch (error) {
         showToast(error.message || "翻訳に失敗しました");
+        resultContainer.style.display = "none";
     } finally {
         setLoading(false);
     }
+}
+
+async function callGemini(apiKey, prompt) {
+    const response = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: { temperature: 0.3, maxOutputTokens: 4096 },
+        }),
+    });
+
+    if (!response.ok) {
+        const errData = await response.json().catch(() => null);
+        if (response.status === 400 || response.status === 403) {
+            throw new Error("APIキーが無効です。設定を確認してください。");
+        }
+        throw new Error(errData?.error?.message || `APIエラー (${response.status})`);
+    }
+
+    const data = await response.json();
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    if (!text) throw new Error("翻訳結果を取得できませんでした。");
+    return text;
 }
 
 function setLoading(loading) {
@@ -286,7 +358,6 @@ function setLoading(loading) {
 async function copyResult() {
     const text = resultText.textContent;
     if (!text) return;
-
     try {
         await navigator.clipboard.writeText(text);
         showToast("コピーしました");
@@ -307,39 +378,24 @@ async function copyResult() {
 function speakResult() {
     const text = resultText.textContent;
     if (!text) return;
-
-    if (speechSynthesis.speaking) {
-        speechSynthesis.cancel();
-        return;
-    }
+    if (speechSynthesis.speaking) { speechSynthesis.cancel(); return; }
 
     const utterance = new SpeechSynthesisUtterance(text);
     const langCode = LANG_TTS[currentTargetLang] || "en-US";
     utterance.lang = langCode;
     utterance.rate = 0.9;
 
-    // Try to find a matching voice
     const voices = speechSynthesis.getVoices();
-    const matchingVoice = voices.find((v) => v.lang.startsWith(langCode.split("-")[0]));
-    if (matchingVoice) {
-        utterance.voice = matchingVoice;
-    }
+    const match = voices.find((v) => v.lang.startsWith(langCode.split("-")[0]));
+    if (match) utterance.voice = match;
 
-    utterance.onstart = () => {
-        speakBtn.style.color = "var(--primary)";
-    };
-    utterance.onend = () => {
-        speakBtn.style.color = "";
-    };
-    utterance.onerror = () => {
-        speakBtn.style.color = "";
-        showToast("音声再生に失敗しました");
-    };
+    utterance.onstart = () => { speakBtn.style.color = "var(--primary)"; };
+    utterance.onend = () => { speakBtn.style.color = ""; };
+    utterance.onerror = () => { speakBtn.style.color = ""; };
 
     speechSynthesis.speak(utterance);
 }
 
-// Load voices (some browsers load async)
 if (speechSynthesis.onvoiceschanged !== undefined) {
     speechSynthesis.onvoiceschanged = () => speechSynthesis.getVoices();
 }
@@ -349,25 +405,88 @@ function handleFileUpload(e) {
     const file = e.target.files[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-        sourceText.value = event.target.result;
-        onSourceInput();
-        showToast(`${file.name} を読み込みました`);
-    };
-    reader.onerror = () => {
-        showToast("ファイルの読み込みに失敗しました");
-    };
-    reader.readAsText(file);
+    if (file.type.startsWith("image/")) {
+        processImage(file);
+    } else {
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            sourceText.value = ev.target.result;
+            onSourceInput();
+            showToast(`${file.name} を読み込みました`);
+        };
+        reader.onerror = () => showToast("ファイルの読み込みに失敗しました");
+        reader.readAsText(file);
+    }
     fileInput.value = "";
+}
+
+function handleImageUpload(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    processImage(file);
+    cameraInput.value = "";
+}
+
+async function processImage(file) {
+    const apiKey = getApiKey();
+    if (!apiKey) {
+        showToast("先にAPIキーを設定してください");
+        openSettings();
+        return;
+    }
+
+    showToast("画像からテキストを読み取り中...");
+
+    try {
+        const base64 = await fileToBase64(file);
+        const mimeType = file.type || "image/jpeg";
+
+        const response = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                contents: [{
+                    parts: [
+                        { text: "Extract ALL text from this image. Output only the extracted text, nothing else. Preserve line breaks." },
+                        { inline_data: { mime_type: mimeType, data: base64 } },
+                    ],
+                }],
+                generationConfig: { temperature: 0.1, maxOutputTokens: 4096 },
+            }),
+        });
+
+        if (!response.ok) throw new Error("画像の読み取りに失敗しました");
+
+        const data = await response.json();
+        const extracted = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+
+        if (extracted) {
+            sourceText.value = extracted;
+            onSourceInput();
+            showToast("テキストを読み取りました");
+        } else {
+            showToast("画像からテキストを検出できませんでした");
+        }
+    } catch (error) {
+        showToast(error.message || "画像処理に失敗しました");
+    }
+}
+
+function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+            const result = reader.result;
+            resolve(result.split(",")[1]); // strip data:...;base64, prefix
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+    });
 }
 
 // ---- Microphone (Speech Recognition) ----
 function toggleMicrophone() {
-    if (isRecording) {
-        stopRecording();
-        return;
-    }
+    if (isRecording) { stopRecording(); return; }
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
@@ -379,13 +498,8 @@ function toggleMicrophone() {
     recognition.continuous = true;
     recognition.interimResults = true;
 
-    // Set recognition language
     const src = sourceLang.value;
-    if (src !== "auto" && LANG_TTS[src]) {
-        recognition.lang = LANG_TTS[src];
-    } else {
-        recognition.lang = "ja-JP";
-    }
+    recognition.lang = (src !== "auto" && LANG_TTS[src]) ? LANG_TTS[src] : "ja-JP";
 
     let finalTranscript = sourceText.value;
 
@@ -404,15 +518,11 @@ function toggleMicrophone() {
     };
 
     recognition.onerror = (event) => {
-        if (event.error !== "aborted") {
-            showToast(`音声認識エラー: ${event.error}`);
-        }
+        if (event.error !== "aborted") showToast(`音声認識エラー: ${event.error}`);
         stopRecording();
     };
 
-    recognition.onend = () => {
-        stopRecording();
-    };
+    recognition.onend = () => stopRecording();
 
     recognition.start();
     isRecording = true;
@@ -422,13 +532,10 @@ function toggleMicrophone() {
 }
 
 function stopRecording() {
-    if (recognition) {
-        recognition.stop();
-        recognition = null;
-    }
+    if (recognition) { recognition.stop(); recognition = null; }
     isRecording = false;
     micBtn.classList.remove("recording");
-    micBtn.querySelector("span").textContent = "音声入力";
+    micBtn.querySelector("span").textContent = "音声";
 }
 
 // ---- Favorites ----
@@ -436,18 +543,14 @@ function getFavorites() {
     try {
         const stored = localStorage.getItem(STORAGE_KEY_FAVORITES);
         return stored ? JSON.parse(stored) : DEFAULT_FAVORITES;
-    } catch {
-        return DEFAULT_FAVORITES;
-    }
+    } catch { return DEFAULT_FAVORITES; }
 }
 
 function saveFavorites(favorites) {
     localStorage.setItem(STORAGE_KEY_FAVORITES, JSON.stringify(favorites));
 }
 
-function loadFavorites() {
-    renderFavorites();
-}
+function loadFavorites() { renderFavorites(); }
 
 function renderFavorites() {
     const favorites = getFavorites();
@@ -458,19 +561,12 @@ function renderFavorites() {
         btn.className = "fav-btn";
         btn.textContent = LANG_SHORT[code] || code;
         btn.dataset.lang = code;
-
-        if (targetLang.value === code) {
-            btn.classList.add("active");
-        }
+        if (targetLang.value === code) btn.classList.add("active");
 
         btn.addEventListener("click", () => {
             targetLang.value = code;
             updateFavoritesHighlight();
-
-            // Real-time translate if there's text
-            if (sourceText.value.trim() && getApiKey()) {
-                handleTranslate();
-            }
+            if (sourceText.value.trim() && getApiKey()) handleTranslate();
         });
 
         favoritesList.appendChild(btn);
@@ -483,7 +579,6 @@ function updateFavoritesHighlight() {
     });
 }
 
-// Listen for manual dropdown change
 targetLang.addEventListener("change", updateFavoritesHighlight);
 
 // ---- Favorites Editor ----
@@ -507,16 +602,12 @@ function renderFavoritesEditor() {
         item.className = "fav-editor-item";
         item.textContent = `${LANG_SHORT[code]} ${LANG_NAMES[code]}`;
         item.dataset.lang = code;
-
-        if (favorites.includes(code)) {
-            item.classList.add("selected");
-        }
+        if (favorites.includes(code)) item.classList.add("selected");
 
         item.addEventListener("click", () => {
             const current = getFavorites();
             if (current.includes(code)) {
-                const updated = current.filter((c) => c !== code);
-                saveFavorites(updated);
+                saveFavorites(current.filter((c) => c !== code));
                 item.classList.remove("selected");
             } else {
                 current.push(code);
@@ -537,9 +628,7 @@ function openSettings() {
     keyStatus.className = "key-status";
 }
 
-function closeSettingsModal() {
-    settingsModal.style.display = "none";
-}
+function closeSettingsModal() { settingsModal.style.display = "none"; }
 
 function toggleKeyVisibility() {
     apiKeyInput.type = apiKeyInput.type === "password" ? "text" : "password";
@@ -560,92 +649,17 @@ function saveApiKey() {
 }
 
 function loadApiKey() {
-    const key = getApiKey();
-    if (!key) {
-        setTimeout(openSettings, 500);
-    }
+    if (!getApiKey()) setTimeout(openSettings, 500);
 }
 
 function getApiKey() {
     return localStorage.getItem(STORAGE_KEY_API) || "";
 }
 
-// ---- History ----
-function getHistory() {
-    try {
-        return JSON.parse(localStorage.getItem(STORAGE_KEY_HISTORY) || "[]");
-    } catch {
-        return [];
-    }
-}
-
-function addToHistory(entry) {
-    const history = getHistory();
-    history.unshift(entry);
-    if (history.length > MAX_HISTORY) history.length = MAX_HISTORY;
-    localStorage.setItem(STORAGE_KEY_HISTORY, JSON.stringify(history));
-    renderHistory(history);
-}
-
-function loadHistory() {
-    const history = getHistory();
-    renderHistory(history);
-}
-
-function renderHistory(history) {
-    if (history.length === 0) {
-        historyContainer.style.display = "none";
-        return;
-    }
-    historyContainer.style.display = "block";
-    historyList.innerHTML = history
-        .map(
-            (item, i) => `
-        <div class="history-item" data-index="${i}">
-            <div class="history-item-lang">${LANG_NAMES[item.srcLang] || item.srcLang} → ${LANG_NAMES[item.tgtLang] || item.tgtLang}</div>
-            <div class="history-item-source">${escapeHtml(item.source)}</div>
-            <div class="history-item-result">${escapeHtml(item.result)}</div>
-        </div>
-    `
-        )
-        .join("");
-
-    historyList.querySelectorAll(".history-item").forEach((el) => {
-        el.addEventListener("click", () => {
-            const idx = parseInt(el.dataset.index);
-            const item = history[idx];
-            if (!item) return;
-            sourceText.value = item.source;
-            if (item.srcLang !== "auto") sourceLang.value = item.srcLang;
-            targetLang.value = item.tgtLang;
-            currentTargetLang = item.tgtLang;
-            resultText.textContent = item.result;
-            resultLang.textContent = LANG_NAMES[item.tgtLang] || item.tgtLang;
-            resultContainer.style.display = "block";
-            onSourceInput();
-            updateFavoritesHighlight();
-            window.scrollTo({ top: 0, behavior: "smooth" });
-        });
-    });
-}
-
-function clearHistory() {
-    localStorage.removeItem(STORAGE_KEY_HISTORY);
-    renderHistory([]);
-    showToast("履歴を削除しました");
-}
-
 // ---- Utilities ----
-function escapeHtml(str) {
-    const div = document.createElement("div");
-    div.textContent = str;
-    return div.innerHTML;
-}
-
 function showToast(message) {
     const existing = document.querySelector(".toast");
     if (existing) existing.remove();
-
     const toast = document.createElement("div");
     toast.className = "toast";
     toast.textContent = message;
