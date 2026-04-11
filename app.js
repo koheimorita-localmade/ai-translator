@@ -283,10 +283,21 @@ async function handleTranslate() {
             ? `the following text to ${tgtName}`
             : `the following text from ${srcName} to ${tgtName}`;
 
+        // Determine learning notes perspective based on language pair
+        const detectedSrcIsJa = (srcLang === "ja") || (srcLang === "auto" && isJapaneseText(text));
+        let notesInstruction;
+        if (detectedSrcIsJa) {
+            // 日本語→外国語: 翻訳後の外国語を解説（その言語を学ぶ日本人向け）
+            notesInstruction = `2-3 brief learning tips IN JAPANESE that analyze the TRANSLATED TEXT (the ${tgtName} output). The reader is a Japanese learner studying ${tgtName}. Explain the grammar structures, key vocabulary, useful phrases, phrasal verbs, and idioms that appear in the translation so the learner can deepen their understanding of ${tgtName}. Use HTML: <p> for paragraphs, <strong> for important terms.`;
+        } else {
+            // 外国語→日本語 or 外国語→外国語: 翻訳元の外国語を解説（その言語を学ぶ日本人向け）
+            notesInstruction = `2-3 brief learning tips IN JAPANESE that analyze the ORIGINAL SOURCE TEXT (the input language). The reader is a Japanese learner studying the source language. Explain the grammar structures, key vocabulary, useful phrases, and any idioms used in the source text so the learner can better understand the original language. Use HTML: <p> for paragraphs, <strong> for important terms.`;
+        }
+
         // Fetch all 4 styles + learning notes in a single API call
         const prompt = `You are a professional translator and language tutor.
 
-Translate ${langContext} in 4 styles, then provide learning notes that analyze the ORIGINAL SOURCE text.
+Translate ${langContext} in 4 styles, then provide learning notes.
 
 Respond in this exact JSON format (no markdown code fences):
 {
@@ -294,7 +305,7 @@ Respond in this exact JSON format (no markdown code fences):
   "casual": "casual, colloquial, friendly translation",
   "formal": "formal, polite, business-appropriate translation",
   "advanced": "natural native-like translation that actively uses phrasal verbs, idioms, and expressions a native speaker would prefer. Show alternative phrasing that builds vocabulary.",
-  "notes": "2-3 brief learning tips IN JAPANESE that analyze the ORIGINAL SOURCE TEXT (the input language, NOT the translation). Explain the grammar structures, key vocabulary, useful phrases, and any idioms used in the source text so the learner can better understand the original language. Use HTML: <p> for paragraphs, <strong> for important terms."
+  "notes": "${notesInstruction}"
 }
 
 Text to translate:
