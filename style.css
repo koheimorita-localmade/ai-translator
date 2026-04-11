@@ -17,6 +17,8 @@
     --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
     --shadow-lg: 0 4px 12px rgba(0,0,0,0.1);
     --transition: 0.2s ease;
+    --danger: #ef4444;
+    --success: #16a34a;
 }
 
 body {
@@ -76,7 +78,7 @@ body {
     display: flex;
     align-items: flex-end;
     gap: 8px;
-    margin-bottom: 16px;
+    margin-bottom: 10px;
 }
 
 .lang-box {
@@ -136,6 +138,95 @@ body {
 
 .swap-btn:active {
     transform: scale(0.95);
+}
+
+/* Favorites Bar */
+.favorites-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 14px;
+}
+
+.favorites-list {
+    display: flex;
+    gap: 6px;
+    flex: 1;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+}
+
+.favorites-list::-webkit-scrollbar {
+    display: none;
+}
+
+.fav-btn {
+    flex-shrink: 0;
+    padding: 6px 14px;
+    border: 1.5px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--transition);
+    font-family: inherit;
+    white-space: nowrap;
+}
+
+.fav-btn:hover {
+    border-color: var(--primary);
+}
+
+.fav-btn.active {
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary);
+}
+
+.fav-edit-btn {
+    flex-shrink: 0;
+    padding: 6px;
+}
+
+/* Input Tools */
+.input-tools {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.tool-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 7px 12px;
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all var(--transition);
+}
+
+.tool-btn:hover {
+    border-color: var(--primary);
+    color: var(--primary);
+}
+
+.tool-btn.recording {
+    border-color: var(--danger);
+    color: var(--danger);
+    animation: pulse 1.5s ease infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
 }
 
 /* Text Areas */
@@ -275,6 +366,12 @@ textarea::placeholder {
     font-weight: 600;
     color: var(--primary);
     text-transform: uppercase;
+}
+
+.result-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
 }
 
 .result-text {
@@ -451,11 +548,40 @@ textarea::placeholder {
 }
 
 .key-status.success {
-    color: #16a34a;
+    color: var(--success);
 }
 
 .key-status.error {
-    color: #dc2626;
+    color: var(--danger);
+}
+
+/* Favorites Editor */
+.favorites-editor {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.fav-editor-item {
+    padding: 8px 16px;
+    border: 1.5px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--text);
+    font-size: 14px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all var(--transition);
+}
+
+.fav-editor-item.selected {
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary);
+}
+
+.fav-editor-item:not(.selected):hover {
+    border-color: var(--primary);
 }
 
 /* Toast */

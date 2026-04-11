@@ -3,7 +3,7 @@
 // ========================================
 
 const LANG_NAMES = {
-    auto: "自動検出",
+    auto: "自動",
     ja: "日本語",
     en: "English",
     zh: "中文 (中国語)",
@@ -17,11 +17,43 @@ const LANG_NAMES = {
     ar: "العربية (アラビア語)",
 };
 
+const LANG_SHORT = {
+    auto: "自動",
+    ja: "日本語",
+    en: "EN",
+    zh: "中文",
+    ko: "韓国語",
+    es: "ES",
+    fr: "FR",
+    de: "DE",
+    pt: "PT",
+    th: "TH",
+    vi: "VI",
+    ar: "AR",
+};
+
+// TTS language codes
+const LANG_TTS = {
+    ja: "ja-JP",
+    en: "en-US",
+    zh: "zh-CN",
+    ko: "ko-KR",
+    es: "es-ES",
+    fr: "fr-FR",
+    de: "de-DE",
+    pt: "pt-BR",
+    th: "th-TH",
+    vi: "vi-VN",
+    ar: "ar-SA",
+};
+
 const GEMINI_MODEL = "gemini-2.5-flash";
 const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 const STORAGE_KEY_API = "gemini_api_key";
 const STORAGE_KEY_HISTORY = "translation_history";
+const STORAGE_KEY_FAVORITES = "favorite_languages";
 const MAX_HISTORY = 20;
+const DEFAULT_FAVORITES = ["en", "zh", "ko", "fr"];
 
 // ---- DOM Elements ----
 const sourceText = document.getElementById("source-text");
@@ -34,6 +66,7 @@ const resultContainer = document.getElementById("result-container");
 const resultText = document.getElementById("result-text");
 const resultLang = document.getElementById("result-lang");
 const copyBtn = document.getElementById("copy-btn");
+const speakBtn = document.getElementById("speak-btn");
 const clearBtn = document.getElementById("clear-btn");
 const charCount = document.getElementById("char-count");
 const swapBtn = document.getElementById("swap-btn");
@@ -47,14 +80,26 @@ const keyStatus = document.getElementById("key-status");
 const historyContainer = document.getElementById("history-container");
 const historyList = document.getElementById("history-list");
 const clearHistoryBtn = document.getElementById("clear-history-btn");
+const favoritesList = document.getElementById("favorites-list");
+const editFavoritesBtn = document.getElementById("edit-favorites-btn");
+const favoritesModal = document.getElementById("favorites-modal");
+const closeFavorites = document.getElementById("close-favorites");
+const favoritesEditor = document.getElementById("favorites-editor");
+const uploadBtn = document.getElementById("upload-btn");
+const fileInput = document.getElementById("file-input");
+const micBtn = document.getElementById("mic-btn");
 
 // ---- State ----
 let isTranslating = false;
+let recognition = null;
+let isRecording = false;
+let currentTargetLang = null; // tracks the resolved target language for TTS
 
 // ---- Init ----
 function init() {
     loadApiKey();
     loadHistory();
+    loadFavorites();
     bindEvents();
     updateTranslateButton();
 }
@@ -65,6 +110,7 @@ function bindEvents() {
     swapBtn.addEventListener("click", swapLanguages);
     copyBtn.addEventListener("click", copyResult);
     clearBtn.addEventListener("click", clearInput);
+    speakBtn.addEventListener("click", speakResult);
 
     // Settings
     settingsBtn.addEventListener("click", openSettings);
@@ -78,6 +124,18 @@ function bindEvents() {
 
     // History
     clearHistoryBtn.addEventListener("click", clearHistory);
+
+    // Favorites
+    editFavoritesBtn.addEventListener("click", openFavoritesEditor);
+    closeFavorites.addEventListener("click", closeFavoritesModal);
+    favoritesModal.querySelector(".modal-backdrop").addEventListener("click", closeFavoritesModal);
+
+    // File upload
+    uploadBtn.addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", handleFileUpload);
+
+    // Microphone
+    micBtn.addEventListener("click", toggleMicrophone);
 
     // Keyboard shortcut: Ctrl/Cmd + Enter to translate
     sourceText.addEventListener("keydown", (e) => {
@@ -109,17 +167,34 @@ function updateTranslateButton() {
     translateBtn.disabled = !hasKey || !hasText || isTranslating;
 }
 
+// ---- Auto Target Language ----
+function isJapaneseText(text) {
+    const japaneseChars = text.match(/[\u3040-\u309F\u30A0-\u30FF]/g);
+    return japaneseChars && japaneseChars.length >= 2;
+}
+
+function resolveTargetLanguage(text) {
+    if (targetLang.value !== "auto") {
+        return targetLang.value;
+    }
+    return isJapaneseText(text) ? "en" : "ja";
+}
+
 // ---- Language Swap ----
 function swapLanguages() {
     if (sourceLang.value === "auto") {
         showToast("自動検出からは入れ替えできません");
         return;
     }
+    if (targetLang.value === "auto") {
+        showToast("翻訳先が自動の場合は入れ替えできません");
+        return;
+    }
     const temp = sourceLang.value;
     sourceLang.value = targetLang.value;
     targetLang.value = temp;
+    updateFavoritesHighlight();
 
-    // Swap text and result if both exist
     if (resultText.textContent && resultContainer.style.display !== "none") {
         const tempText = sourceText.value;
         sourceText.value = resultText.textContent;
@@ -143,7 +218,8 @@ async function handleTranslate() {
 
     try {
         const srcLang = sourceLang.value;
-        const tgtLang = targetLang.value;
+        const tgtLang = resolveTargetLanguage(text);
+        currentTargetLang = tgtLang;
         const srcName = LANG_NAMES[srcLang] || srcLang;
         const tgtName = LANG_NAMES[tgtLang] || tgtLang;
 
@@ -181,12 +257,10 @@ async function handleTranslate() {
             throw new Error("翻訳結果を取得できませんでした。");
         }
 
-        // Show result
         resultText.textContent = translated;
         resultLang.textContent = tgtName;
         resultContainer.style.display = "block";
 
-        // Save to history
         addToHistory({
             source: text,
             result: translated,
@@ -217,7 +291,6 @@ async function copyResult() {
         await navigator.clipboard.writeText(text);
         showToast("コピーしました");
     } catch {
-        // Fallback for older browsers
         const ta = document.createElement("textarea");
         ta.value = text;
         ta.style.position = "fixed";
@@ -228,6 +301,232 @@ async function copyResult() {
         document.body.removeChild(ta);
         showToast("コピーしました");
     }
+}
+
+// ---- Text-to-Speech ----
+function speakResult() {
+    const text = resultText.textContent;
+    if (!text) return;
+
+    if (speechSynthesis.speaking) {
+        speechSynthesis.cancel();
+        return;
+    }
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    const langCode = LANG_TTS[currentTargetLang] || "en-US";
+    utterance.lang = langCode;
+    utterance.rate = 0.9;
+
+    // Try to find a matching voice
+    const voices = speechSynthesis.getVoices();
+    const matchingVoice = voices.find((v) => v.lang.startsWith(langCode.split("-")[0]));
+    if (matchingVoice) {
+        utterance.voice = matchingVoice;
+    }
+
+    utterance.onstart = () => {
+        speakBtn.style.color = "var(--primary)";
+    };
+    utterance.onend = () => {
+        speakBtn.style.color = "";
+    };
+    utterance.onerror = () => {
+        speakBtn.style.color = "";
+        showToast("音声再生に失敗しました");
+    };
+
+    speechSynthesis.speak(utterance);
+}
+
+// Load voices (some browsers load async)
+if (speechSynthesis.onvoiceschanged !== undefined) {
+    speechSynthesis.onvoiceschanged = () => speechSynthesis.getVoices();
+}
+
+// ---- File Upload ----
+function handleFileUpload(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+        sourceText.value = event.target.result;
+        onSourceInput();
+        showToast(`${file.name} を読み込みました`);
+    };
+    reader.onerror = () => {
+        showToast("ファイルの読み込みに失敗しました");
+    };
+    reader.readAsText(file);
+    fileInput.value = "";
+}
+
+// ---- Microphone (Speech Recognition) ----
+function toggleMicrophone() {
+    if (isRecording) {
+        stopRecording();
+        return;
+    }
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+        showToast("このブラウザは音声入力に対応していません");
+        return;
+    }
+
+    recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+
+    // Set recognition language
+    const src = sourceLang.value;
+    if (src !== "auto" && LANG_TTS[src]) {
+        recognition.lang = LANG_TTS[src];
+    } else {
+        recognition.lang = "ja-JP";
+    }
+
+    let finalTranscript = sourceText.value;
+
+    recognition.onresult = (event) => {
+        let interim = "";
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+            const transcript = event.results[i][0].transcript;
+            if (event.results[i].isFinal) {
+                finalTranscript += transcript;
+            } else {
+                interim += transcript;
+            }
+        }
+        sourceText.value = finalTranscript + interim;
+        onSourceInput();
+    };
+
+    recognition.onerror = (event) => {
+        if (event.error !== "aborted") {
+            showToast(`音声認識エラー: ${event.error}`);
+        }
+        stopRecording();
+    };
+
+    recognition.onend = () => {
+        stopRecording();
+    };
+
+    recognition.start();
+    isRecording = true;
+    micBtn.classList.add("recording");
+    micBtn.querySelector("span").textContent = "停止";
+    showToast("音声入力中...");
+}
+
+function stopRecording() {
+    if (recognition) {
+        recognition.stop();
+        recognition = null;
+    }
+    isRecording = false;
+    micBtn.classList.remove("recording");
+    micBtn.querySelector("span").textContent = "音声入力";
+}
+
+// ---- Favorites ----
+function getFavorites() {
+    try {
+        const stored = localStorage.getItem(STORAGE_KEY_FAVORITES);
+        return stored ? JSON.parse(stored) : DEFAULT_FAVORITES;
+    } catch {
+        return DEFAULT_FAVORITES;
+    }
+}
+
+function saveFavorites(favorites) {
+    localStorage.setItem(STORAGE_KEY_FAVORITES, JSON.stringify(favorites));
+}
+
+function loadFavorites() {
+    renderFavorites();
+}
+
+function renderFavorites() {
+    const favorites = getFavorites();
+    favoritesList.innerHTML = "";
+
+    favorites.forEach((code) => {
+        const btn = document.createElement("button");
+        btn.className = "fav-btn";
+        btn.textContent = LANG_SHORT[code] || code;
+        btn.dataset.lang = code;
+
+        if (targetLang.value === code) {
+            btn.classList.add("active");
+        }
+
+        btn.addEventListener("click", () => {
+            targetLang.value = code;
+            updateFavoritesHighlight();
+
+            // Real-time translate if there's text
+            if (sourceText.value.trim() && getApiKey()) {
+                handleTranslate();
+            }
+        });
+
+        favoritesList.appendChild(btn);
+    });
+}
+
+function updateFavoritesHighlight() {
+    document.querySelectorAll(".fav-btn").forEach((btn) => {
+        btn.classList.toggle("active", btn.dataset.lang === targetLang.value);
+    });
+}
+
+// Listen for manual dropdown change
+targetLang.addEventListener("change", updateFavoritesHighlight);
+
+// ---- Favorites Editor ----
+function openFavoritesEditor() {
+    favoritesModal.style.display = "flex";
+    renderFavoritesEditor();
+}
+
+function closeFavoritesModal() {
+    favoritesModal.style.display = "none";
+    renderFavorites();
+}
+
+function renderFavoritesEditor() {
+    const favorites = getFavorites();
+    const allLangs = Object.keys(LANG_NAMES).filter((k) => k !== "auto");
+
+    favoritesEditor.innerHTML = "";
+    allLangs.forEach((code) => {
+        const item = document.createElement("button");
+        item.className = "fav-editor-item";
+        item.textContent = `${LANG_SHORT[code]} ${LANG_NAMES[code]}`;
+        item.dataset.lang = code;
+
+        if (favorites.includes(code)) {
+            item.classList.add("selected");
+        }
+
+        item.addEventListener("click", () => {
+            const current = getFavorites();
+            if (current.includes(code)) {
+                const updated = current.filter((c) => c !== code);
+                saveFavorites(updated);
+                item.classList.remove("selected");
+            } else {
+                current.push(code);
+                saveFavorites(current);
+                item.classList.add("selected");
+            }
+        });
+
+        favoritesEditor.appendChild(item);
+    });
 }
 
 // ---- Settings ----
@@ -263,7 +562,6 @@ function saveApiKey() {
 function loadApiKey() {
     const key = getApiKey();
     if (!key) {
-        // First visit: auto-open settings
         setTimeout(openSettings, 500);
     }
 }
@@ -312,7 +610,6 @@ function renderHistory(history) {
         )
         .join("");
 
-    // Click to reuse
     historyList.querySelectorAll(".history-item").forEach((el) => {
         el.addEventListener("click", () => {
             const idx = parseInt(el.dataset.index);
@@ -321,10 +618,12 @@ function renderHistory(history) {
             sourceText.value = item.source;
             if (item.srcLang !== "auto") sourceLang.value = item.srcLang;
             targetLang.value = item.tgtLang;
+            currentTargetLang = item.tgtLang;
             resultText.textContent = item.result;
             resultLang.textContent = LANG_NAMES[item.tgtLang] || item.tgtLang;
             resultContainer.style.display = "block";
             onSourceInput();
+            updateFavoritesHighlight();
             window.scrollTo({ top: 0, behavior: "smooth" });
         });
     });
