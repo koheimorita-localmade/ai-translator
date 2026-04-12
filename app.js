@@ -116,7 +116,6 @@ const countdownValue = document.getElementById("countdown-value");
 const countdownText = document.getElementById("countdown-text");
 const voiceFeedbackBtn = document.getElementById("voice-feedback-btn");
 const voiceListenHint = document.getElementById("voice-listen-hint");
-const voiceHeardEl = document.getElementById("voice-heard");
 const statTotal = document.getElementById("stat-total");
 const statDue = document.getElementById("stat-due");
 const statNew = document.getElementById("stat-new");
@@ -1818,7 +1817,6 @@ function loadNextCard() {
     showAnswerBtn.style.display = "block";
     feedbackButtons.style.display = "none";
     autoplayCountdown.style.display = "none";
-    voiceHeardEl.style.display = "none";
     voiceListenHint.style.display = "none";
 
     sessionProgress.textContent = `${study.sessionCount} 問目`;
@@ -1852,7 +1850,6 @@ function revealAnswer() {
                 // Start voice recognition if enabled (listens during countdown)
                 if (study.voiceFeedback) {
                     startVoiceRecognition((quality, transcript) => {
-                        flashVoiceHeard(transcript);
                         submitFeedback(quality, { fromVoice: true });
                     });
                 }
@@ -1903,8 +1900,8 @@ async function submitFeedback(quality, opts = {}) {
         console.warn("Score sync failed:", err);
     });
 
-    // Next card — longer delay when source was voice so the user sees the confirmation
-    const nextDelay = opts.fromVoice ? 1400 : 400;
+    // Next card — when source was voice, give enough time to see the button highlight
+    const nextDelay = opts.fromVoice ? 1900 : 400;
     setTimeout(() => {
         if (study.active) loadNextCard();
     }, nextDelay);
@@ -1916,7 +1913,7 @@ function highlightFeedbackButton(quality) {
     const btn = feedbackButtons.querySelector(`.${cls}`);
     if (!btn) return;
     btn.classList.add("matched");
-    setTimeout(() => btn.classList.remove("matched"), 1300);
+    setTimeout(() => btn.classList.remove("matched"), 1800);
 }
 
 function exitStudySession(opts = {}) {
@@ -1980,7 +1977,6 @@ function toggleAutoplay() {
                 // Answer is already visible → start voice recognition too
                 if (study.voiceFeedback) {
                     startVoiceRecognition((quality, transcript) => {
-                        flashVoiceHeard(transcript);
                         submitFeedback(quality, { fromVoice: true });
                     });
                 }
@@ -2015,7 +2011,6 @@ function startCountdown(callback, opts = {}) {
     } else {
         voiceListenHint.style.display = "none";
     }
-    voiceHeardEl.style.display = "none";
 
     study.autoplayTimer = setInterval(() => {
         remaining--;
@@ -2135,12 +2130,6 @@ function stopVoiceRecognition() {
         study.recognition = null;
         try { r.onend = null; r.onresult = null; r.onerror = null; r.stop(); } catch {}
     }
-    voiceListenHint.style.display = "none";
-}
-
-function flashVoiceHeard(text) {
-    voiceHeardEl.textContent = `🎤 「${text}」`;
-    voiceHeardEl.style.display = "block";
     voiceListenHint.style.display = "none";
 }
 
