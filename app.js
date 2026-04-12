@@ -1772,6 +1772,11 @@ function startStudySession() {
     // playback audio session on iOS after the mic is used.
     ensureAudioContext();
 
+    // Start silent audio loop — this keeps iOS audio session in "playback"
+    // category throughout the study session, so the session doesn't stay
+    // stuck in "record" mode after speech recognition.
+    startSilentAudioLoop();
+
     study.active = true;
     study.pairKey = pairKey;
     study.direction = getActiveDirection();
@@ -1939,6 +1944,7 @@ function exitStudySession(opts = {}) {
     clearAutoplayTimer();
     stopVoiceRecognition();
     killTTS();
+    stopSilentAudioLoop();
 
     if (!wasActive && opts.silent) return;
 
@@ -1975,6 +1981,9 @@ function speakText(text, lang, onDone) {
     if (typeof speechSynthesis === "undefined") { done(); return; }
 
     try { speechSynthesis.cancel(); } catch {}
+
+    // Last-chance iOS session nudge right before speaking
+    nudgeAudioToPlayback();
 
     const utterance = new SpeechSynthesisUtterance(text);
     const langCode = LANG_TTS[lang] || "en-US";
@@ -2172,15 +2181,49 @@ function stopVoiceRecognition() {
     }
     voiceListenHint.style.display = "none";
     // iOS: after microphone stops, audio session stays in "record" mode which
-    // degrades TTS quality to earpiece-call-mode. Nudge it back to playback.
-    if (wasRunning) nudgeAudioToPlayback();
+    // degrades TTS quality to earpiece-call-mode. Aggressively reset:
+    // 1. Recreate AudioContext (old one was tainted by record session)
+    // 2. Nudge with a brief audible oscillator
+    // 3. Silent background audio loop (started at session start) keeps
+    //    the session biased toward "playback" category
+    if (wasRunning) {
+        recreateAudioContext();
+        nudgeAudioToPlayback();
+    }
 }
 
 // ---- Audio session helper (iOS playback mode switch) ----
 let _audioCtx = null;
+let _silentLoopAudio = null;
+
+// Silent MP3 (~0.3s) as data URL. Loop keeps iOS audio session in "playback" mode.
+const SILENT_MP3_DATA_URL = "data:audio/mpeg;base64,//tAxAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAACcQCAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgP////////////////////////////////////////////////////////////////8AAAA8TEFNRTMuMTAwA8MAAAAAAAAAABSAJAJAQgAAgAAAAnGMHkkJAAAAAAD/+0DEAAPH3Yz0AAR8cPQxnoAAj44AAAGkxBTUUzLjEwMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV";
+
+function startSilentAudioLoop() {
+    if (_silentLoopAudio) return;
+    try {
+        _silentLoopAudio = new Audio();
+        _silentLoopAudio.src = SILENT_MP3_DATA_URL;
+        _silentLoopAudio.loop = true;
+        _silentLoopAudio.volume = 0;
+        _silentLoopAudio.preload = "auto";
+        // Must be invoked in a user-gesture context; startStudySession calls this
+        _silentLoopAudio.play().catch(() => {});
+    } catch {}
+}
+
+function stopSilentAudioLoop() {
+    if (_silentLoopAudio) {
+        try {
+            _silentLoopAudio.pause();
+            _silentLoopAudio.src = "";
+        } catch {}
+        _silentLoopAudio = null;
+    }
+}
 
 function ensureAudioContext() {
-    if (_audioCtx) return _audioCtx;
+    if (_audioCtx && _audioCtx.state !== "closed") return _audioCtx;
     try {
         const AC = window.AudioContext || window.webkitAudioContext;
         if (!AC) return null;
@@ -2191,6 +2234,16 @@ function ensureAudioContext() {
     return _audioCtx;
 }
 
+function recreateAudioContext() {
+    // Close the old context (which may have been set up in "record" mode)
+    // and build a fresh one so subsequent playback uses a clean audio session.
+    if (_audioCtx) {
+        try { _audioCtx.close(); } catch {}
+        _audioCtx = null;
+    }
+    return ensureAudioContext();
+}
+
 function nudgeAudioToPlayback() {
     const ctx = ensureAudioContext();
     if (!ctx) return;
@@ -2198,14 +2251,16 @@ function nudgeAudioToPlayback() {
         if (ctx.state === "suspended") {
             ctx.resume().catch(() => {});
         }
-        // Playing a silent 1-sample buffer nudges iOS to switch audio session
-        // from "record" back to "playback" category. Without this, TTS after
-        // speech-recognition sounds like a phone-call (low-quality earpiece).
-        const buffer = ctx.createBuffer(1, 1, 22050);
-        const source = ctx.createBufferSource();
-        source.buffer = buffer;
-        source.connect(ctx.destination);
-        source.start(0);
+        // Brief near-silent oscillator to cue iOS that we're in playback.
+        // Audible frequencies are handled differently than subsonic, so use ~440Hz.
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        gain.gain.value = 0.0001; // essentially inaudible
+        osc.frequency.value = 440;
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.05);
     } catch {}
 }
 
