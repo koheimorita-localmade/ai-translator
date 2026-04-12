@@ -177,15 +177,119 @@
         </div>
 
         <!-- ============================== -->
-        <!-- STUDY VIEW (placeholder)       -->
+        <!-- STUDY VIEW                     -->
         <!-- ============================== -->
         <div id="study-view" class="mode-view" style="display:none;">
-            <div class="placeholder-view">
+
+            <!-- Setup panel -->
+            <div id="study-setup" class="study-setup">
+                <div class="form-group">
+                    <label for="study-pair">言語ペア</label>
+                    <select id="study-pair" class="pair-select"></select>
+                </div>
+
+                <div class="form-group">
+                    <label>方向</label>
+                    <div class="direction-toggle" id="direction-toggle">
+                        <button class="direction-btn active" data-direction="a_to_b">
+                            <span class="dir-from">-</span>
+                            <span class="dir-arrow">→</span>
+                            <span class="dir-to">-</span>
+                        </button>
+                        <button class="direction-btn" data-direction="b_to_a">
+                            <span class="dir-from">-</span>
+                            <span class="dir-arrow">→</span>
+                            <span class="dir-to">-</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="study-stats" id="study-stats">
+                    <div class="stat-item">
+                        <div class="stat-value" id="stat-total">0</div>
+                        <div class="stat-label">カード</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="stat-due">0</div>
+                        <div class="stat-label">復習</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="stat-new">0</div>
+                        <div class="stat-label">未学習</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="stat-learned">0</div>
+                        <div class="stat-label">習得中</div>
+                    </div>
+                </div>
+
+                <button id="study-start-btn" class="translate-btn" disabled>学習を開始</button>
+            </div>
+
+            <!-- Active session -->
+            <div id="study-session" class="study-session" style="display:none;">
+                <div class="session-header">
+                    <button id="study-exit-btn" class="text-btn">終了</button>
+                    <span id="session-progress" class="session-progress">0 / 0</span>
+                    <button id="autoplay-toggle-btn" class="text-btn" aria-label="自動再生">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;">
+                            <polygon points="5 3 19 12 5 21 5 3"/>
+                        </svg>
+                        自動
+                    </button>
+                </div>
+
+                <div class="flashcard">
+                    <!-- Question -->
+                    <div class="flashcard-section flashcard-question">
+                        <div class="flashcard-lang-tag" id="question-lang-tag">-</div>
+                        <div id="question-text" class="flashcard-text"></div>
+                        <button id="speak-question-btn" class="icon-btn flashcard-speak" aria-label="読み上げ">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                            </svg>
+                        </button>
+                    </div>
+
+                    <!-- Answer -->
+                    <div id="answer-block" class="flashcard-section flashcard-answer" style="display:none;">
+                        <div class="flashcard-lang-tag" id="answer-lang-tag">-</div>
+                        <div id="answer-text" class="flashcard-text"></div>
+                        <button id="speak-answer-btn" class="icon-btn flashcard-speak" aria-label="読み上げ">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Actions -->
+                <button id="show-answer-btn" class="translate-btn">答えを表示</button>
+
+                <div id="feedback-buttons" class="feedback-buttons" style="display:none;">
+                    <button class="feedback-btn feedback-hard" data-quality="1">
+                        <div class="feedback-label">わからない</div>
+                    </button>
+                    <button class="feedback-btn feedback-medium" data-quality="3">
+                        <div class="feedback-label">時間かかった</div>
+                    </button>
+                    <button class="feedback-btn feedback-easy" data-quality="5">
+                        <div class="feedback-label">覚えた</div>
+                    </button>
+                </div>
+
+                <div id="autoplay-countdown" class="autoplay-countdown" style="display:none;">
+                    次の動作まで <span id="countdown-value">0</span> 秒
+                </div>
+            </div>
+
+            <!-- Empty state -->
+            <div id="study-empty" class="placeholder-view" style="display:none;">
                 <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:0.4;">
                     <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
                 </svg>
-                <h2>学習モード</h2>
-                <p class="placeholder-text">Phase 2で実装予定です。<br>まずは翻訳モードでカードを保存してください。</p>
+                <h2>カードがありません</h2>
+                <p class="placeholder-text">翻訳モードで翻訳結果を保存すると<br>学習に使えるようになります。</p>
             </div>
         </div>
 

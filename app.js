@@ -91,6 +91,32 @@ const translateView = document.getElementById("translate-view");
 const studyView = document.getElementById("study-view");
 const cardsView = document.getElementById("cards-view");
 
+// Study view
+const studySetup = document.getElementById("study-setup");
+const studySession = document.getElementById("study-session");
+const studyEmpty = document.getElementById("study-empty");
+const studyPairSelect = document.getElementById("study-pair");
+const directionToggle = document.getElementById("direction-toggle");
+const studyStartBtn = document.getElementById("study-start-btn");
+const studyExitBtn = document.getElementById("study-exit-btn");
+const sessionProgress = document.getElementById("session-progress");
+const questionLangTag = document.getElementById("question-lang-tag");
+const questionTextEl = document.getElementById("question-text");
+const answerLangTag = document.getElementById("answer-lang-tag");
+const answerTextEl = document.getElementById("answer-text");
+const answerBlock = document.getElementById("answer-block");
+const speakQuestionBtn = document.getElementById("speak-question-btn");
+const speakAnswerBtn = document.getElementById("speak-answer-btn");
+const showAnswerBtn = document.getElementById("show-answer-btn");
+const feedbackButtons = document.getElementById("feedback-buttons");
+const autoplayToggleBtn = document.getElementById("autoplay-toggle-btn");
+const autoplayCountdown = document.getElementById("autoplay-countdown");
+const countdownValue = document.getElementById("countdown-value");
+const statTotal = document.getElementById("stat-total");
+const statDue = document.getElementById("stat-due");
+const statNew = document.getElementById("stat-new");
+const statLearned = document.getElementById("stat-learned");
+
 // Cards view
 const cardsCount = document.getElementById("cards-count");
 const cardsRefreshBtn = document.getElementById("cards-refresh-btn");
@@ -245,6 +271,25 @@ function bindEvents() {
     cardEditModal.querySelector(".modal-backdrop").addEventListener("click", closeCardEditModal);
     cardUpdateBtn.addEventListener("click", confirmUpdateCard);
     cardDeleteBtn.addEventListener("click", confirmDeleteCard);
+
+    // Study mode
+    studyPairSelect.addEventListener("change", updateStudyStats);
+    directionToggle.querySelectorAll(".direction-btn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            directionToggle.querySelectorAll(".direction-btn").forEach((b) => b.classList.remove("active"));
+            btn.classList.add("active");
+            updateStudyStats();
+        });
+    });
+    studyStartBtn.addEventListener("click", startStudySession);
+    studyExitBtn.addEventListener("click", exitStudySession);
+    showAnswerBtn.addEventListener("click", revealAnswer);
+    speakQuestionBtn.addEventListener("click", () => speakText(questionTextEl.textContent, study.currentQuestionLang));
+    speakAnswerBtn.addEventListener("click", () => speakText(answerTextEl.textContent, study.currentAnswerLang));
+    autoplayToggleBtn.addEventListener("click", toggleAutoplay);
+    feedbackButtons.querySelectorAll(".feedback-btn").forEach((btn) => {
+        btn.addEventListener("click", () => submitFeedback(parseInt(btn.dataset.quality)));
+    });
 }
 
 // ---- Mode Navigation ----
@@ -256,10 +301,16 @@ function switchMode(mode) {
 
     if (mode === "cards") {
         renderCards();
-        // Refresh in background if cache is empty
         if (cardsCache.length === 0 && getGasUrl()) {
             fetchAllFromDb().catch(() => {});
         }
+    }
+
+    if (mode === "study") {
+        initStudyView();
+    } else {
+        // Clean up when leaving study mode
+        exitStudySession({ silent: true });
     }
 }
 
@@ -1470,6 +1521,436 @@ async function confirmDeleteCard() {
         showToast(`削除失敗: ${error.message}`);
     } finally {
         cardDeleteBtn.disabled = false;
+    }
+}
+
+// ============================================================
+// Phase 2: Study Mode (SM-2 simplified)
+// ============================================================
+
+// Study state
+const study = {
+    active: false,
+    pairKey: null,
+    direction: "a_to_b", // a_to_b or b_to_a
+    currentCard: null,
+    currentQuestionLang: null,
+    currentAnswerLang: null,
+    sessionCount: 0,
+    answered: false,
+    autoplay: false,
+    autoplayTimer: null,
+    autoplayPhase: null, // "question" | "show_answer" | "next" | null
+};
+
+// ---- Score helpers ----
+function getScoreKey(direction) {
+    // direction is stored as "a_to_b" or "b_to_a"
+    return direction;
+}
+
+function findScore(pairId, direction) {
+    return scoresCache.find((s) => s.pairId === pairId && s.direction === direction);
+}
+
+function defaultScore() {
+    return { easeFactor: 2.5, interval: 0, nextReview: null, lastReviewed: null, repetitions: 0 };
+}
+
+// SM-2 simplified
+// quality: 1 = わからない / 3 = 時間かかった / 5 = 覚えた
+function sm2Update(prev, quality) {
+    const next = {
+        easeFactor: prev.easeFactor || 2.5,
+        interval: prev.interval || 0,
+        repetitions: prev.repetitions || 0,
+    };
+
+    if (quality < 3) {
+        // Failed: reset to short interval
+        next.repetitions = 0;
+        next.interval = 0; // 今日もう一度
+    } else {
+        next.repetitions = (next.repetitions || 0) + 1;
+        if (next.repetitions === 1) next.interval = 1;
+        else if (next.repetitions === 2) next.interval = 6;
+        else next.interval = Math.round((next.interval || 1) * next.easeFactor);
+    }
+
+    // Update ease factor
+    next.easeFactor = next.easeFactor + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02));
+    if (next.easeFactor < 1.3) next.easeFactor = 1.3;
+    if (next.easeFactor > 3.0) next.easeFactor = 3.0;
+
+    const now = new Date();
+    const nextDate = new Date(now.getTime() + next.interval * 24 * 60 * 60 * 1000);
+    return {
+        ...next,
+        easeFactor: Math.round(next.easeFactor * 1000) / 1000,
+        nextReview: nextDate.toISOString(),
+        lastReviewed: now.toISOString(),
+    };
+}
+
+// Cards by pair and learning status
+function getCardsByPair(pairKey) {
+    return cardsCache.filter((c) => c.pairKey === pairKey);
+}
+
+function isDue(score) {
+    if (!score || !score.nextReview) return true; // never learned
+    return new Date(score.nextReview).getTime() <= Date.now();
+}
+
+// Weighted random pick: overdue cards get higher weight; new cards get priority too
+function pickNextCard(pairKey, direction) {
+    const cards = getCardsByPair(pairKey);
+    if (cards.length === 0) return null;
+
+    const now = Date.now();
+    const weighted = cards.map((card) => {
+        const score = findScore(card.id, direction);
+        let weight;
+        if (!score) {
+            weight = 5; // unlearned — high priority but not overwhelming
+        } else if (!score.nextReview || new Date(score.nextReview).getTime() <= now) {
+            // overdue: weight by how overdue it is (max 10)
+            const overdueHours = score.nextReview
+                ? (now - new Date(score.nextReview).getTime()) / (60 * 60 * 1000)
+                : 24;
+            weight = Math.min(10, 3 + overdueHours / 24);
+        } else {
+            weight = 0.3; // not yet due — low priority (still possible but rare)
+        }
+        // Avoid repeating the exact same card right after
+        if (study.currentCard && study.currentCard.id === card.id) {
+            weight *= 0.15;
+        }
+        return { card, weight };
+    });
+
+    const totalWeight = weighted.reduce((s, x) => s + x.weight, 0);
+    if (totalWeight === 0) return cards[0];
+
+    let r = Math.random() * totalWeight;
+    for (const item of weighted) {
+        r -= item.weight;
+        if (r <= 0) return item.card;
+    }
+    return weighted[weighted.length - 1].card;
+}
+
+// ---- Study view init ----
+function initStudyView() {
+    // Ensure we have cards
+    if (cardsCache.length === 0) {
+        studySetup.style.display = "none";
+        studySession.style.display = "none";
+        studyEmpty.style.display = "block";
+        if (getGasUrl()) fetchAllFromDb().catch(() => {});
+        return;
+    }
+
+    studySetup.style.display = "block";
+    studySession.style.display = "none";
+    studyEmpty.style.display = "none";
+
+    // Populate pair selector with unique pairKeys
+    const pairKeys = [...new Set(cardsCache.map((c) => c.pairKey))].sort();
+    const prevValue = studyPairSelect.value;
+    studyPairSelect.innerHTML = "";
+    pairKeys.forEach((key) => {
+        const opt = document.createElement("option");
+        opt.value = key;
+        const [a, b] = key.split("-");
+        const count = cardsCache.filter((c) => c.pairKey === key).length;
+        opt.textContent = `${LANG_NAMES[a] || a} ↔ ${LANG_NAMES[b] || b} (${count}枚)`;
+        studyPairSelect.appendChild(opt);
+    });
+    if (prevValue && pairKeys.includes(prevValue)) {
+        studyPairSelect.value = prevValue;
+    }
+
+    updateDirectionButtons();
+    updateStudyStats();
+}
+
+function updateDirectionButtons() {
+    const pairKey = studyPairSelect.value;
+    if (!pairKey) return;
+    const [a, b] = pairKey.split("-");
+    const btns = directionToggle.querySelectorAll(".direction-btn");
+    // a_to_b: langA → langB (show A, answer B)
+    btns[0].querySelector(".dir-from").textContent = LANG_SHORT[a] || a;
+    btns[0].querySelector(".dir-to").textContent = LANG_SHORT[b] || b;
+    // b_to_a
+    btns[1].querySelector(".dir-from").textContent = LANG_SHORT[b] || b;
+    btns[1].querySelector(".dir-to").textContent = LANG_SHORT[a] || a;
+}
+
+function getActiveDirection() {
+    const active = directionToggle.querySelector(".direction-btn.active");
+    return active ? active.dataset.direction : "a_to_b";
+}
+
+function updateStudyStats() {
+    updateDirectionButtons();
+    const pairKey = studyPairSelect.value;
+    const direction = getActiveDirection();
+    const cards = pairKey ? getCardsByPair(pairKey) : [];
+
+    let due = 0;
+    let newCount = 0;
+    let learned = 0;
+    const now = Date.now();
+    cards.forEach((c) => {
+        const s = findScore(c.id, direction);
+        if (!s) {
+            newCount++;
+        } else if (!s.nextReview || new Date(s.nextReview).getTime() <= now) {
+            due++;
+        } else {
+            learned++;
+        }
+    });
+
+    statTotal.textContent = cards.length;
+    statDue.textContent = due;
+    statNew.textContent = newCount;
+    statLearned.textContent = learned;
+
+    studyStartBtn.disabled = cards.length === 0;
+}
+
+// ---- Session ----
+function startStudySession() {
+    const pairKey = studyPairSelect.value;
+    if (!pairKey) return;
+    if (getCardsByPair(pairKey).length === 0) {
+        showToast("このペアにカードがありません");
+        return;
+    }
+
+    study.active = true;
+    study.pairKey = pairKey;
+    study.direction = getActiveDirection();
+    study.sessionCount = 0;
+    study.currentCard = null;
+
+    studySetup.style.display = "none";
+    studySession.style.display = "block";
+    studyEmpty.style.display = "none";
+
+    loadNextCard();
+}
+
+function loadNextCard() {
+    clearAutoplayTimer();
+
+    const card = pickNextCard(study.pairKey, study.direction);
+    if (!card) {
+        showToast("カードが選択できませんでした");
+        exitStudySession();
+        return;
+    }
+
+    study.currentCard = card;
+    study.answered = false;
+    study.sessionCount++;
+
+    const [a, b] = card.pairKey.split("-");
+    let qLang, qText, aLang, aText;
+    if (study.direction === "a_to_b") {
+        qLang = a; qText = card.textA;
+        aLang = b; aText = card.textB;
+    } else {
+        qLang = b; qText = card.textB;
+        aLang = a; aText = card.textA;
+    }
+
+    study.currentQuestionLang = qLang;
+    study.currentAnswerLang = aLang;
+
+    questionLangTag.textContent = LANG_NAMES[qLang] || qLang;
+    questionTextEl.textContent = qText;
+    answerLangTag.textContent = LANG_NAMES[aLang] || aLang;
+    answerTextEl.textContent = aText;
+
+    answerBlock.style.display = "none";
+    showAnswerBtn.style.display = "block";
+    feedbackButtons.style.display = "none";
+    autoplayCountdown.style.display = "none";
+
+    sessionProgress.textContent = `${study.sessionCount} 問目`;
+
+    // Auto-speak question, then chain countdown if autoplay
+    setTimeout(() => {
+        if (!study.active || study.answered) return;
+        speakText(qText, qLang, () => {
+            if (study.autoplay && study.active && !study.answered) {
+                startCountdown(() => {
+                    if (study.active && !study.answered) revealAnswer();
+                });
+            }
+        });
+    }, 200);
+}
+
+function revealAnswer() {
+    if (!study.currentCard) return;
+    clearAutoplayTimer();
+
+    answerBlock.style.display = "block";
+    showAnswerBtn.style.display = "none";
+    feedbackButtons.style.display = "grid";
+
+    // Auto-speak answer, then chain next-card countdown if autoplay
+    setTimeout(() => {
+        if (!study.active) return;
+        speakText(answerTextEl.textContent, study.currentAnswerLang, () => {
+            if (study.autoplay && study.active && !study.answered) {
+                startCountdown(() => {
+                    // No feedback given → skip scoring
+                    if (study.active && !study.answered) {
+                        study.answered = true;
+                        loadNextCard();
+                    }
+                });
+            }
+        });
+    }, 200);
+}
+
+async function submitFeedback(quality) {
+    if (!study.currentCard || study.answered) return;
+    study.answered = true;
+    clearAutoplayTimer();
+
+    const card = study.currentCard;
+    const direction = study.direction;
+    const prev = findScore(card.id, direction) || defaultScore();
+    const updated = sm2Update(prev, quality);
+
+    const scoreData = {
+        pairId: card.id,
+        direction,
+        ...updated,
+    };
+
+    // Update local cache immediately (optimistic)
+    const existing = scoresCache.find((s) => s.pairId === card.id && s.direction === direction);
+    if (existing) {
+        Object.assign(existing, scoreData);
+    } else {
+        scoresCache.push(scoreData);
+    }
+
+    // Post to GAS (non-blocking)
+    gasPost("updateScore", { score: scoreData }).catch((err) => {
+        // Silent fail — local cache is still correct, will sync on next fetch
+        console.warn("Score sync failed:", err);
+    });
+
+    // Next card
+    setTimeout(() => {
+        if (study.active) loadNextCard();
+    }, 300);
+}
+
+function exitStudySession(opts = {}) {
+    clearAutoplayTimer();
+    if (!study.active && opts.silent) return;
+
+    study.active = false;
+    study.currentCard = null;
+    study.autoplay = false;
+
+    if (typeof speechSynthesis !== "undefined") {
+        try { speechSynthesis.cancel(); } catch {}
+    }
+
+    if (studyView.style.display === "none") return; // view already switched away
+
+    studySession.style.display = "none";
+    studySetup.style.display = "block";
+    updateStudyStats();
+    autoplayToggleBtn.classList.remove("active");
+    autoplayCountdown.style.display = "none";
+}
+
+// ---- TTS helper (used by study mode) ----
+function speakText(text, lang, onDone) {
+    const done = onDone || (() => {});
+    if (!text) { done(); return; }
+    if (typeof speechSynthesis === "undefined") { done(); return; }
+
+    try { speechSynthesis.cancel(); } catch {}
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    const langCode = LANG_TTS[lang] || "en-US";
+    utterance.lang = langCode;
+    utterance.rate = 0.9;
+
+    const voices = speechSynthesis.getVoices();
+    const match = voices.find((v) => v.lang.startsWith(langCode.split("-")[0]));
+    if (match) utterance.voice = match;
+
+    let fired = false;
+    const fire = () => { if (!fired) { fired = true; done(); } };
+    utterance.onend = fire;
+    utterance.onerror = fire;
+
+    speechSynthesis.speak(utterance);
+}
+
+// ---- Autoplay ----
+function toggleAutoplay() {
+    study.autoplay = !study.autoplay;
+    autoplayToggleBtn.classList.toggle("active", study.autoplay);
+    if (study.autoplay) {
+        showToast("自動再生ON");
+        // If user enables autoplay mid-session, kick off next-step countdown
+        if (study.currentCard && !study.answered && !speechSynthesis.speaking) {
+            if (answerBlock.style.display === "none") {
+                startCountdown(() => revealAnswer());
+            } else {
+                startCountdown(() => {
+                    study.answered = true;
+                    loadNextCard();
+                });
+            }
+        }
+    } else {
+        showToast("自動再生OFF");
+        clearAutoplayTimer();
+        autoplayCountdown.style.display = "none";
+    }
+}
+
+function startCountdown(callback) {
+    clearAutoplayTimer();
+    if (!study.autoplay || !study.active) return;
+
+    const delay = parseInt(autoplayDelaySelect.value) || DEFAULT_AUTOPLAY_DELAY;
+    let remaining = delay;
+    autoplayCountdown.style.display = "block";
+    countdownValue.textContent = remaining;
+
+    study.autoplayTimer = setInterval(() => {
+        remaining--;
+        countdownValue.textContent = remaining;
+        if (remaining <= 0) {
+            clearAutoplayTimer();
+            autoplayCountdown.style.display = "none";
+            if (study.active && study.autoplay) callback();
+        }
+    }, 1000);
+}
+
+function clearAutoplayTimer() {
+    if (study.autoplayTimer) {
+        clearInterval(study.autoplayTimer);
+        study.autoplayTimer = null;
     }
 }
 
