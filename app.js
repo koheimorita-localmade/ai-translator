@@ -70,6 +70,7 @@ const fileInput = document.getElementById("file-input");
 const cameraBtn = document.getElementById("camera-btn");
 const cameraInput = document.getElementById("camera-input");
 const micBtn = document.getElementById("mic-btn");
+const pasteBtn = document.getElementById("paste-btn");
 const learningSection = document.getElementById("learning-section");
 const learningNotes = document.getElementById("learning-notes");
 const styleTabs = document.querySelectorAll(".style-tab");
@@ -132,6 +133,9 @@ function bindEvents() {
 
     // Microphone
     micBtn.addEventListener("click", toggleMicrophone);
+
+    // Clipboard paste
+    pasteBtn.addEventListener("click", pasteFromClipboard);
 
     // Keyboard shortcut
     sourceText.addEventListener("keydown", (e) => {
@@ -545,6 +549,62 @@ function fileToBase64(file) {
         reader.onerror = reject;
         reader.readAsDataURL(file);
     });
+}
+
+// ---- Clipboard Paste (text + image) ----
+async function pasteFromClipboard() {
+    try {
+        // Prefer the full clipboard API (supports images)
+        if (navigator.clipboard && typeof navigator.clipboard.read === "function") {
+            const items = await navigator.clipboard.read();
+            for (const item of items) {
+                // Image takes priority — route through OCR
+                const imageType = item.types.find((t) => t.startsWith("image/"));
+                if (imageType) {
+                    const blob = await item.getType(imageType);
+                    const file = new File([blob], "clipboard-image", { type: imageType });
+                    processImage(file);
+                    return;
+                }
+                // Then plain text
+                if (item.types.includes("text/plain")) {
+                    const blob = await item.getType("text/plain");
+                    const text = await blob.text();
+                    if (text) {
+                        sourceText.value = text;
+                        onSourceInput();
+                        showToast("テキストを貼り付けました");
+                        return;
+                    }
+                }
+            }
+            showToast("クリップボードに対応するデータがありません");
+            return;
+        }
+
+        // Fallback: text-only API
+        if (navigator.clipboard && typeof navigator.clipboard.readText === "function") {
+            const text = await navigator.clipboard.readText();
+            if (text) {
+                sourceText.value = text;
+                onSourceInput();
+                showToast("テキストを貼り付けました");
+            } else {
+                showToast("クリップボードが空です");
+            }
+            return;
+        }
+
+        showToast("このブラウザはクリップボード読み取りに対応していません");
+    } catch (error) {
+        if (error.name === "NotAllowedError") {
+            showToast("クリップボードへのアクセスが許可されていません");
+        } else if (error.name === "NotFoundError") {
+            showToast("クリップボードが空です");
+        } else {
+            showToast("クリップボードを読み取れませんでした");
+        }
+    }
 }
 
 // ---- Microphone (Speech Recognition) ----
