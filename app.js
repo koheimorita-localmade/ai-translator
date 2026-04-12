@@ -156,8 +156,18 @@ const editLangA = document.getElementById("edit-lang-a");
 const editLangB = document.getElementById("edit-lang-b");
 const editTextA = document.getElementById("edit-text-a");
 const editTextB = document.getElementById("edit-text-b");
+const editStyleInput = document.getElementById("edit-style");
+const editSpeakA = document.getElementById("edit-speak-a");
+const editSpeakB = document.getElementById("edit-speak-b");
+const cardMetaInfo = document.getElementById("card-meta-info");
+const cardScoresEl = document.getElementById("card-scores");
 const cardUpdateBtn = document.getElementById("card-update-btn");
 const cardDeleteBtn = document.getElementById("card-delete-btn");
+const cardActions = document.getElementById("card-actions");
+const cardDeleteConfirm = document.getElementById("card-delete-confirm");
+const cardDeleteCancel = document.getElementById("card-delete-cancel");
+const cardDeleteExecute = document.getElementById("card-delete-execute");
+const cardEditStatus = document.getElementById("card-edit-status");
 
 // ---- State ----
 let isTranslating = false;
@@ -275,7 +285,11 @@ function bindEvents() {
     closeCardEdit.addEventListener("click", closeCardEditModal);
     cardEditModal.querySelector(".modal-backdrop").addEventListener("click", closeCardEditModal);
     cardUpdateBtn.addEventListener("click", confirmUpdateCard);
-    cardDeleteBtn.addEventListener("click", confirmDeleteCard);
+    cardDeleteBtn.addEventListener("click", showDeleteConfirm);
+    cardDeleteCancel.addEventListener("click", hideDeleteConfirm);
+    cardDeleteExecute.addEventListener("click", confirmDeleteCard);
+    editSpeakA.addEventListener("click", () => speakFromEdit("a"));
+    editSpeakB.addEventListener("click", () => speakFromEdit("b"));
 
     // Study mode
     studyPairSelect.addEventListener("change", updateStudyStats);
@@ -1506,38 +1520,177 @@ function renderCards() {
 
 function openCardEdit(card) {
     currentEditingCardId = card.id;
-    editLangA.textContent = `${LANG_NAMES[card.langA] || card.langA}`;
-    editLangB.textContent = `${LANG_NAMES[card.langB] || card.langB}`;
+    editLangA.textContent = LANG_NAMES[card.langA] || card.langA || "A";
+    editLangB.textContent = LANG_NAMES[card.langB] || card.langB || "B";
     editTextA.value = card.textA || "";
     editTextB.value = card.textB || "";
+    editStyleInput.value = card.style || "";
+
+    cardEditStatus.textContent = "";
+    cardEditStatus.className = "key-status";
+    hideDeleteConfirm();
+
+    renderCardMeta(card);
+    renderCardScores(card);
+
     cardEditModal.style.display = "flex";
 }
 
 function closeCardEditModal() {
     cardEditModal.style.display = "none";
     currentEditingCardId = null;
+    hideDeleteConfirm();
+}
+
+function renderCardMeta(card) {
+    const created = card.createdAt ? new Date(card.createdAt) : null;
+    const createdStr = created && !isNaN(created.getTime())
+        ? created.toLocaleString("ja-JP", { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
+        : "不明";
+    cardMetaInfo.innerHTML = `
+        <div><strong>ペア:</strong> ${escapeHtml(card.pairKey || "-")}</div>
+        <div><strong>作成日:</strong> ${escapeHtml(createdStr)}</div>
+        <div><strong>ID:</strong> <span style="font-family:monospace; font-size:11px;">${escapeHtml(card.id || "-")}</span></div>
+    `;
+}
+
+function renderCardScores(card) {
+    const directions = [
+        { key: "a_to_b", from: card.langA, to: card.langB },
+        { key: "b_to_a", from: card.langB, to: card.langA },
+    ];
+
+    cardScoresEl.innerHTML = "";
+    directions.forEach((dir) => {
+        const score = findScore(card.id, dir.key);
+        const item = document.createElement("div");
+        item.className = "score-item";
+
+        const fromName = LANG_SHORT[dir.from] || dir.from;
+        const toName = LANG_SHORT[dir.to] || dir.to;
+
+        let status, statusLabel;
+        if (!score) {
+            status = "status-new";
+            statusLabel = "未学習";
+        } else if (!score.nextReview || new Date(score.nextReview).getTime() <= Date.now()) {
+            status = "status-due";
+            statusLabel = "復習待ち";
+        } else {
+            status = "status-learned";
+            statusLabel = "習得中";
+        }
+
+        let details = "";
+        if (score) {
+            const nextReview = score.nextReview ? new Date(score.nextReview) : null;
+            const lastReviewed = score.lastReviewed ? new Date(score.lastReviewed) : null;
+            const nextReviewStr = nextReview && !isNaN(nextReview.getTime())
+                ? nextReview.toLocaleDateString("ja-JP", { month: "short", day: "numeric" }) + " " + nextReview.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })
+                : "-";
+            const lastReviewedStr = lastReviewed && !isNaN(lastReviewed.getTime())
+                ? lastReviewed.toLocaleDateString("ja-JP", { month: "short", day: "numeric" })
+                : "-";
+            const ef = score.easeFactor != null ? Number(score.easeFactor).toFixed(2) : "-";
+            const interval = score.interval != null ? `${score.interval}日` : "-";
+            const reps = score.repetitions != null ? score.repetitions : "-";
+
+            details = `
+                <div class="score-details">
+                    <div><span class="score-label">次回:</span> ${escapeHtml(nextReviewStr)}</div>
+                    <div><span class="score-label">間隔:</span> ${escapeHtml(interval)}</div>
+                    <div><span class="score-label">復習数:</span> ${escapeHtml(String(reps))}</div>
+                    <div><span class="score-label">前回:</span> ${escapeHtml(lastReviewedStr)}</div>
+                    <div><span class="score-label">EF:</span> ${escapeHtml(ef)}</div>
+                </div>
+            `;
+        } else {
+            details = `<div class="score-details"><div style="grid-column: 1 / -1;">まだ学習していません</div></div>`;
+        }
+
+        item.innerHTML = `
+            <div class="score-item-head">
+                <span class="score-direction">${escapeHtml(fromName)} → ${escapeHtml(toName)}</span>
+                <span class="score-status-chip ${status}">${statusLabel}</span>
+            </div>
+            ${details}
+            <button class="score-reset-btn" data-direction="${dir.key}" ${!score ? "disabled" : ""}>
+                進捗をリセット
+            </button>
+        `;
+
+        const resetBtn = item.querySelector(".score-reset-btn");
+        if (resetBtn && score) {
+            resetBtn.addEventListener("click", () => resetCardScore(card.id, dir.key, item));
+        }
+
+        cardScoresEl.appendChild(item);
+    });
+}
+
+async function resetCardScore(pairId, direction, itemEl) {
+    const resetBtn = itemEl.querySelector(".score-reset-btn");
+    if (resetBtn) resetBtn.disabled = true;
+
+    try {
+        await gasPost("deleteScore", { pairId, direction });
+        scoresCache = scoresCache.filter((s) => !(s.pairId === pairId && s.direction === direction));
+
+        // Re-render the card's scores
+        const card = cardsCache.find((c) => c.id === pairId);
+        if (card) renderCardScores(card);
+        showToast("進捗をリセットしました");
+    } catch (error) {
+        showToast(`リセット失敗: ${error.message}`);
+        if (resetBtn) resetBtn.disabled = false;
+    }
+}
+
+function speakFromEdit(side) {
+    const text = side === "a" ? editTextA.value : editTextB.value;
+    if (!text.trim()) return;
+    const card = cardsCache.find((c) => c.id === currentEditingCardId);
+    const lang = card ? (side === "a" ? card.langA : card.langB) : "en";
+    speakText(text, lang);
+}
+
+function showDeleteConfirm() {
+    cardActions.style.display = "none";
+    cardDeleteConfirm.style.display = "block";
+}
+
+function hideDeleteConfirm() {
+    cardActions.style.display = "flex";
+    cardDeleteConfirm.style.display = "none";
 }
 
 async function confirmUpdateCard() {
     if (!currentEditingCardId) return;
     const textA = editTextA.value.trim();
     const textB = editTextB.value.trim();
+    const style = editStyleInput.value.trim();
     if (!textA || !textB) {
-        showToast("両方のテキストを入力してください");
+        cardEditStatus.textContent = "両方のテキストを入力してください";
+        cardEditStatus.className = "key-status error";
         return;
     }
 
     cardUpdateBtn.disabled = true;
+    cardEditStatus.textContent = "更新中...";
+    cardEditStatus.className = "key-status";
+
     try {
-        await dbUpdatePair({ id: currentEditingCardId, textA, textB });
+        await dbUpdatePair({ id: currentEditingCardId, textA, textB, style });
         // Update local cache
         const card = cardsCache.find((c) => c.id === currentEditingCardId);
-        if (card) { card.textA = textA; card.textB = textB; }
+        if (card) { card.textA = textA; card.textB = textB; card.style = style; }
         renderCards();
-        showToast("更新しました");
-        closeCardEditModal();
+        cardEditStatus.textContent = "更新しました";
+        cardEditStatus.className = "key-status success";
+        setTimeout(closeCardEditModal, 700);
     } catch (error) {
-        showToast(`更新失敗: ${error.message}`);
+        cardEditStatus.textContent = `更新失敗: ${error.message}`;
+        cardEditStatus.className = "key-status error";
     } finally {
         cardUpdateBtn.disabled = false;
     }
@@ -1545,9 +1698,11 @@ async function confirmUpdateCard() {
 
 async function confirmDeleteCard() {
     if (!currentEditingCardId) return;
-    if (!confirm("このカードを削除しますか？\n(関連するスコアも削除されます)")) return;
 
-    cardDeleteBtn.disabled = true;
+    cardDeleteExecute.disabled = true;
+    cardEditStatus.textContent = "削除中...";
+    cardEditStatus.className = "key-status";
+
     try {
         await dbDeletePair(currentEditingCardId);
         cardsCache = cardsCache.filter((c) => c.id !== currentEditingCardId);
@@ -1556,9 +1711,10 @@ async function confirmDeleteCard() {
         showToast("削除しました");
         closeCardEditModal();
     } catch (error) {
-        showToast(`削除失敗: ${error.message}`);
+        cardEditStatus.textContent = `削除失敗: ${error.message}`;
+        cardEditStatus.className = "key-status error";
     } finally {
-        cardDeleteBtn.disabled = false;
+        cardDeleteExecute.disabled = false;
     }
 }
 

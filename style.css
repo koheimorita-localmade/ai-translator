@@ -955,6 +955,159 @@ textarea::placeholder {
 }
 
 /* =====================================
+   Card Edit Modal
+   ===================================== */
+.label-with-action {
+    display: flex !important;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.inline-speak {
+    padding: 4px !important;
+    color: var(--text-secondary);
+}
+
+.inline-speak:hover {
+    color: var(--primary);
+}
+
+.simple-input {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 14px;
+    font-family: inherit;
+}
+
+.simple-input:focus {
+    outline: none;
+    border-color: var(--primary);
+}
+
+.card-meta-info {
+    font-size: 12px;
+    color: var(--text-secondary);
+    background: var(--bg);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin: 12px 0;
+    line-height: 1.6;
+}
+
+.card-meta-info strong {
+    color: var(--text);
+    font-weight: 600;
+}
+
+.card-scores {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 8px 0 4px;
+}
+
+.score-item {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+}
+
+.score-item-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+}
+
+.score-direction {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--primary);
+}
+
+.score-status-chip {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.score-status-chip.status-new {
+    background: #fef3c7;
+    color: #b45309;
+}
+
+.score-status-chip.status-due {
+    background: #fee2e2;
+    color: #b91c1c;
+}
+
+.score-status-chip.status-learned {
+    background: #dcfce7;
+    color: #15803d;
+}
+
+.score-details {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 4px 10px;
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+}
+
+.score-details .score-label {
+    font-weight: 600;
+    color: var(--text);
+}
+
+.score-reset-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 5px 10px;
+    font-size: 11px;
+    font-family: inherit;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all var(--transition);
+}
+
+.score-reset-btn:hover:not(:disabled) {
+    background: var(--danger);
+    color: white;
+    border-color: var(--danger);
+}
+
+.score-reset-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.delete-confirm {
+    margin-top: 14px;
+    padding: 14px;
+    border: 1.5px solid var(--danger);
+    border-radius: var(--radius);
+    background: #fef2f2;
+}
+
+.delete-confirm-msg {
+    font-size: 14px;
+    color: var(--text);
+    line-height: 1.5;
+    margin-bottom: 10px;
+}
+
+/* =====================================
    Study Mode
    ===================================== */
 .study-setup {

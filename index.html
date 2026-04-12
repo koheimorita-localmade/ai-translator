@@ -479,17 +479,52 @@
                 </div>
                 <div class="modal-body">
                     <div class="form-group">
-                        <label><span id="edit-lang-a">A</span></label>
+                        <label class="label-with-action">
+                            <span id="edit-lang-a">A</span>
+                            <button id="edit-speak-a" class="icon-btn inline-speak" aria-label="読み上げ">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                                </svg>
+                            </button>
+                        </label>
                         <textarea id="edit-text-a" rows="3"></textarea>
                     </div>
                     <div class="form-group">
-                        <label><span id="edit-lang-b">B</span></label>
+                        <label class="label-with-action">
+                            <span id="edit-lang-b">B</span>
+                            <button id="edit-speak-b" class="icon-btn inline-speak" aria-label="読み上げ">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                                </svg>
+                            </button>
+                        </label>
                         <textarea id="edit-text-b" rows="3"></textarea>
                     </div>
-                    <div style="display:flex; gap:8px;">
-                        <button id="card-update-btn" class="translate-btn" style="flex:1;">更新</button>
-                        <button id="card-delete-btn" class="translate-btn danger-btn" style="flex:0 0 auto;">削除</button>
+
+                    <div class="form-group">
+                        <label for="edit-style">スタイル</label>
+                        <input type="text" id="edit-style" class="simple-input" placeholder="normal / casual / formal / advanced など">
                     </div>
+
+                    <div class="card-meta-info" id="card-meta-info"></div>
+
+                    <div class="card-scores" id="card-scores"></div>
+
+                    <div id="card-actions" style="display:flex; gap:8px; margin-top: 12px;">
+                        <button id="card-update-btn" class="translate-btn" style="flex:1;">更新</button>
+                        <button id="card-delete-btn" class="translate-btn danger-btn">削除</button>
+                    </div>
+
+                    <!-- Inline delete confirmation -->
+                    <div id="card-delete-confirm" class="delete-confirm" style="display:none;">
+                        <p class="delete-confirm-msg">このカードを削除しますか？<br>関連するスコアも一緒に削除されます。</p>
+                        <div style="display:flex; gap:8px;">
+                            <button id="card-delete-cancel" class="translate-btn" style="flex:1; background: var(--text-secondary);">キャンセル</button>
+                            <button id="card-delete-execute" class="translate-btn danger-btn" style="flex:1;">削除する</button>
+                        </div>
+                    </div>
+
+                    <p id="card-edit-status" class="key-status"></p>
                 </div>
             </div>
         </div>
