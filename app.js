@@ -1768,6 +1768,10 @@ function startStudySession() {
         return;
     }
 
+    // Initialize AudioContext on user gesture so it can later force
+    // playback audio session on iOS after the mic is used.
+    ensureAudioContext();
+
     study.active = true;
     study.pairKey = pairKey;
     study.direction = getActiveDirection();
@@ -1821,7 +1825,11 @@ function loadNextCard() {
 
     sessionProgress.textContent = `${study.sessionCount} 問目`;
 
-    // Auto-speak question, then chain countdown if autoplay
+    // Force audio to playback mode before TTS (iOS audio session workaround)
+    nudgeAudioToPlayback();
+
+    // Auto-speak question, then chain countdown if autoplay.
+    // Longer delay gives iOS time to switch audio session from record → playback.
     setTimeout(() => {
         if (!study.active || study.answered) return;
         speakText(qText, qLang, () => {
@@ -1831,7 +1839,7 @@ function loadNextCard() {
                 });
             }
         });
-    }, 200);
+    }, 350);
 }
 
 function revealAnswer() {
@@ -1841,6 +1849,9 @@ function revealAnswer() {
     answerBlock.style.display = "block";
     showAnswerBtn.style.display = "none";
     feedbackButtons.style.display = "grid";
+
+    // Ensure playback audio mode before speaking the answer
+    nudgeAudioToPlayback();
 
     // Auto-speak answer, then chain next-card countdown if autoplay
     setTimeout(() => {
@@ -1917,17 +1928,19 @@ function highlightFeedbackButton(quality) {
 }
 
 function exitStudySession(opts = {}) {
+    const wasActive = study.active;
+
+    // Set all flags FIRST so any in-flight async callbacks abort
+    study.active = false;
+    study.autoplay = false;
+    study.answered = true;
+    study.currentCard = null;
+
     clearAutoplayTimer();
     stopVoiceRecognition();
-    if (!study.active && opts.silent) return;
+    killTTS();
 
-    study.active = false;
-    study.currentCard = null;
-    study.autoplay = false;
-
-    if (typeof speechSynthesis !== "undefined") {
-        try { speechSynthesis.cancel(); } catch {}
-    }
+    if (!wasActive && opts.silent) return;
 
     if (studyView.style.display === "none") return; // view already switched away
 
@@ -1936,6 +1949,23 @@ function exitStudySession(opts = {}) {
     updateStudyStats();
     autoplayToggleBtn.classList.remove("active");
     autoplayCountdown.style.display = "none";
+}
+
+// iOS-safe TTS cancellation: pause + cancel + retry
+function killTTS() {
+    if (typeof speechSynthesis === "undefined") return;
+    try {
+        speechSynthesis.pause();
+        speechSynthesis.cancel();
+    } catch {}
+    // Some iOS versions need a second cancel after a tick
+    setTimeout(() => {
+        try {
+            if (speechSynthesis.speaking || speechSynthesis.pending) {
+                speechSynthesis.cancel();
+            }
+        } catch {}
+    }, 80);
 }
 
 // ---- TTS helper (used by study mode) ----
@@ -1956,7 +1986,16 @@ function speakText(text, lang, onDone) {
     if (match) utterance.voice = match;
 
     let fired = false;
-    const fire = () => { if (!fired) { fired = true; done(); } };
+    const fire = () => {
+        if (fired) return;
+        fired = true;
+        // If study was exited while speaking, don't fire chain callbacks
+        if (typeof study !== "undefined" && study && !study.active && study.currentCard === null) {
+            // in-flight TTS after exit — swallow the callback
+            return;
+        }
+        done();
+    };
     utterance.onend = fire;
     utterance.onerror = fire;
 
@@ -2125,12 +2164,49 @@ function startVoiceRecognition(onMatch) {
 }
 
 function stopVoiceRecognition() {
+    const wasRunning = !!study.recognition;
     if (study.recognition) {
         const r = study.recognition;
         study.recognition = null;
         try { r.onend = null; r.onresult = null; r.onerror = null; r.stop(); } catch {}
     }
     voiceListenHint.style.display = "none";
+    // iOS: after microphone stops, audio session stays in "record" mode which
+    // degrades TTS quality to earpiece-call-mode. Nudge it back to playback.
+    if (wasRunning) nudgeAudioToPlayback();
+}
+
+// ---- Audio session helper (iOS playback mode switch) ----
+let _audioCtx = null;
+
+function ensureAudioContext() {
+    if (_audioCtx) return _audioCtx;
+    try {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return null;
+        _audioCtx = new AC();
+    } catch {
+        return null;
+    }
+    return _audioCtx;
+}
+
+function nudgeAudioToPlayback() {
+    const ctx = ensureAudioContext();
+    if (!ctx) return;
+    try {
+        if (ctx.state === "suspended") {
+            ctx.resume().catch(() => {});
+        }
+        // Playing a silent 1-sample buffer nudges iOS to switch audio session
+        // from "record" back to "playback" category. Without this, TTS after
+        // speech-recognition sounds like a phone-call (low-quality earpiece).
+        const buffer = ctx.createBuffer(1, 1, 22050);
+        const source = ctx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(ctx.destination);
+        source.start(0);
+    } catch {}
 }
 
 // ---- Start ----
