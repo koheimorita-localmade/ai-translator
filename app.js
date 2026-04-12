@@ -288,7 +288,15 @@ function bindEvents() {
         });
     });
     studyStartBtn.addEventListener("click", startStudySession);
-    studyExitBtn.addEventListener("click", exitStudySession);
+    // Stop recognition on pointerdown so iOS doesn't block the click during mic listening
+    studyExitBtn.addEventListener("pointerdown", () => stopVoiceRecognition());
+    studyExitBtn.addEventListener("click", () => exitStudySession());
+    autoplayToggleBtn.addEventListener("pointerdown", () => stopVoiceRecognition());
+    voiceFeedbackBtn.addEventListener("pointerdown", () => stopVoiceRecognition());
+    // Feedback buttons also stop recognition immediately on touch
+    feedbackButtons.querySelectorAll(".feedback-btn").forEach((btn) => {
+        btn.addEventListener("pointerdown", () => stopVoiceRecognition());
+    });
     showAnswerBtn.addEventListener("click", revealAnswer);
     speakQuestionBtn.addEventListener("click", () => speakText(questionTextEl.textContent, study.currentQuestionLang));
     speakAnswerBtn.addEventListener("click", () => speakText(answerTextEl.textContent, study.currentAnswerLang));
@@ -1810,6 +1818,8 @@ function loadNextCard() {
     showAnswerBtn.style.display = "block";
     feedbackButtons.style.display = "none";
     autoplayCountdown.style.display = "none";
+    voiceHeardEl.style.display = "none";
+    voiceListenHint.style.display = "none";
 
     sessionProgress.textContent = `${study.sessionCount} 問目`;
 
@@ -1843,7 +1853,7 @@ function revealAnswer() {
                 if (study.voiceFeedback) {
                     startVoiceRecognition((quality, transcript) => {
                         flashVoiceHeard(transcript);
-                        submitFeedback(quality);
+                        submitFeedback(quality, { fromVoice: true });
                     });
                 }
                 startCountdown(() => {
@@ -1859,11 +1869,14 @@ function revealAnswer() {
     }, 200);
 }
 
-async function submitFeedback(quality) {
+async function submitFeedback(quality, opts = {}) {
     if (!study.currentCard || study.answered) return;
     study.answered = true;
     clearAutoplayTimer();
     stopVoiceRecognition();
+
+    // Visual confirmation: highlight the matched button
+    highlightFeedbackButton(quality);
 
     const card = study.currentCard;
     const direction = study.direction;
@@ -1890,10 +1903,20 @@ async function submitFeedback(quality) {
         console.warn("Score sync failed:", err);
     });
 
-    // Next card
+    // Next card — longer delay when source was voice so the user sees the confirmation
+    const nextDelay = opts.fromVoice ? 1400 : 400;
     setTimeout(() => {
         if (study.active) loadNextCard();
-    }, 300);
+    }, nextDelay);
+}
+
+function highlightFeedbackButton(quality) {
+    const cls = { 1: "feedback-hard", 3: "feedback-medium", 5: "feedback-easy" }[quality];
+    if (!cls) return;
+    const btn = feedbackButtons.querySelector(`.${cls}`);
+    if (!btn) return;
+    btn.classList.add("matched");
+    setTimeout(() => btn.classList.remove("matched"), 1300);
 }
 
 function exitStudySession(opts = {}) {
@@ -1958,7 +1981,7 @@ function toggleAutoplay() {
                 if (study.voiceFeedback) {
                     startVoiceRecognition((quality, transcript) => {
                         flashVoiceHeard(transcript);
-                        submitFeedback(quality);
+                        submitFeedback(quality, { fromVoice: true });
                     });
                 }
                 startCountdown(() => {
@@ -2091,12 +2114,8 @@ function startVoiceRecognition(onMatch) {
     };
 
     recognition.onend = () => {
-        // Auto-restart if still in listening state and countdown running
-        if (study.recognition === recognition && study.active && study.autoplay && study.voiceFeedback && study.autoplayTimer) {
-            try {
-                recognition.start();
-            } catch {}
-        }
+        // No aggressive auto-restart — this caused UI freezes on iOS.
+        // Recognition runs long enough for most countdown durations.
     };
 
     study.recognition = recognition;
