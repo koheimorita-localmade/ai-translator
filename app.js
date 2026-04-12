@@ -270,71 +270,120 @@ async function handleTranslate() {
 
     setLoading(true);
     resultContainer.style.display = "block";
-    resultText.textContent = "";
-    learningSection.style.display = "none";
+    resultText.textContent = "翻訳中...";
+    learningNotes.innerHTML = `<p style="color:var(--text-secondary);"><span class="spinner-inline"></span>学習メモを生成中...</p>`;
+    learningSection.style.display = "block";
 
     const tgtName = LANG_NAMES[tgtLang] || tgtLang;
     resultLang.textContent = tgtName;
 
-    try {
-        const srcLang = sourceLang.value;
-        const srcName = LANG_NAMES[srcLang] || srcLang;
-        const langContext = srcLang === "auto"
-            ? `the following text to ${tgtName}`
-            : `the following text from ${srcName} to ${tgtName}`;
+    const srcLang = sourceLang.value;
+    const srcName = LANG_NAMES[srcLang] || srcLang;
+    const langContext = srcLang === "auto"
+        ? `the following text to ${tgtName}`
+        : `the following text from ${srcName} to ${tgtName}`;
 
-        // Determine learning notes perspective based on language pair
-        const detectedSrcIsJa = (srcLang === "ja") || (srcLang === "auto" && isJapaneseText(text));
-        let notesInstruction;
-        if (detectedSrcIsJa) {
-            // 日本語→外国語: 翻訳後の外国語を解説（その言語を学ぶ日本人向け）
-            notesInstruction = `2-3 brief learning tips IN JAPANESE that analyze the TRANSLATED TEXT (the ${tgtName} output). The reader is a Japanese learner studying ${tgtName}. Explain the grammar structures, key vocabulary, useful phrases, phrasal verbs, and idioms that appear in the translation so the learner can deepen their understanding of ${tgtName}. Use HTML: <p> for paragraphs, <strong> for important terms.`;
-        } else {
-            // 外国語→日本語 or 外国語→外国語: 翻訳元の外国語を解説（その言語を学ぶ日本人向け）
-            notesInstruction = `2-3 brief learning tips IN JAPANESE that analyze the ORIGINAL SOURCE TEXT (the input language). The reader is a Japanese learner studying the source language. Explain the grammar structures, key vocabulary, useful phrases, and any idioms used in the source text so the learner can better understand the original language. Use HTML: <p> for paragraphs, <strong> for important terms.`;
-        }
+    // Mark all non-normal tabs as loading
+    ["casual", "formal", "advanced"].forEach((style) => {
+        const tab = document.querySelector(`.style-tab[data-style="${style}"]`);
+        if (tab) tab.classList.add("loading");
+    });
 
-        // Fetch all 4 styles + learning notes in a single API call
-        const prompt = `You are a professional translator and language tutor.
+    // ===== Step 1: Normal translation (fastest, shown first) =====
+    const normalPrompt = `Translate ${langContext}. Output ONLY the translated text, no explanations.\n\n${text}`;
 
-Translate ${langContext} in 4 styles, then provide learning notes.
+    let normalPromise = callGemini(apiKey, normalPrompt)
+        .then((result) => {
+            translationCache.normal = result;
+            if (activeStyle === "normal" && lastSourceText === text) {
+                resultText.textContent = result;
+            }
+            setLoading(false); // Hide main spinner as soon as normal is ready
+        })
+        .catch((error) => {
+            showToast(error.message || "翻訳に失敗しました");
+            resultContainer.style.display = "none";
+            setLoading(false);
+            throw error;
+        });
 
-Respond in this exact JSON format (no markdown code fences):
+    // ===== Step 2: Other 3 styles (parallel with normal, in one batched call) =====
+    const stylesPrompt = `You are a professional translator.
+
+Translate ${langContext} in 3 different styles.
+
+Respond in this exact JSON format (no markdown code fences, no extra text):
 {
-  "normal": "standard/literal translation",
   "casual": "casual, colloquial, friendly translation",
   "formal": "formal, polite, business-appropriate translation",
-  "advanced": "natural native-like translation that actively uses phrasal verbs, idioms, and expressions a native speaker would prefer. Show alternative phrasing that builds vocabulary.",
-  "notes": "${notesInstruction}"
+  "advanced": "natural native-like translation that actively uses phrasal verbs, idioms, and expressions a native speaker would prefer"
 }
 
 Text to translate:
 ${text}`;
 
-        const raw = await callGemini(apiKey, prompt);
+    let stylesPromise = callGemini(apiKey, stylesPrompt)
+        .then((raw) => {
+            if (lastSourceText !== text) return; // Stale response guard
+            const jsonStr = raw.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+            const parsed = JSON.parse(jsonStr);
+            translationCache.casual = parsed.casual || "";
+            translationCache.formal = parsed.formal || "";
+            translationCache.advanced = parsed.advanced || "";
 
-        // Parse JSON — strip markdown fences if present
-        const jsonStr = raw.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
-        const parsed = JSON.parse(jsonStr);
+            // Update tabs: remove loading state
+            ["casual", "formal", "advanced"].forEach((style) => {
+                const tab = document.querySelector(`.style-tab[data-style="${style}"]`);
+                if (tab) tab.classList.remove("loading");
+            });
 
-        translationCache.normal = parsed.normal || "";
-        translationCache.casual = parsed.casual || "";
-        translationCache.formal = parsed.formal || "";
-        translationCache.advanced = parsed.advanced || "";
-        translationCache.notes = parsed.notes || "";
+            // If user switched to one of these tabs while loading, update display
+            if (translationCache[activeStyle]) {
+                resultText.textContent = translationCache[activeStyle];
+            }
+        })
+        .catch(() => {
+            ["casual", "formal", "advanced"].forEach((style) => {
+                const tab = document.querySelector(`.style-tab[data-style="${style}"]`);
+                if (tab) tab.classList.remove("loading");
+            });
+        });
 
-        resultText.textContent = translationCache[activeStyle] || translationCache.normal;
-
-        if (translationCache.notes) {
-            learningNotes.innerHTML = translationCache.notes;
-            learningSection.style.display = "block";
-        }
-    } catch (error) {
-        showToast(error.message || "翻訳に失敗しました");
-        resultContainer.style.display = "none";
-    } finally {
-        setLoading(false);
+    // ===== Step 3: Learning notes (after normal is ready for perspective) =====
+    const detectedSrcIsJa = (srcLang === "ja") || (srcLang === "auto" && isJapaneseText(text));
+    let notesInstruction;
+    if (detectedSrcIsJa) {
+        notesInstruction = `2-3 concise learning tips IN JAPANESE (each 1-2 sentences, keep it short) that analyze the TRANSLATED TEXT (the ${tgtName} output). The reader is a Japanese learner studying ${tgtName}. Explain key grammar, vocabulary, phrasal verbs, or idioms that appear in the translation.`;
+    } else {
+        notesInstruction = `2-3 concise learning tips IN JAPANESE (each 1-2 sentences, keep it short) that analyze the ORIGINAL SOURCE TEXT (the input language). The reader is a Japanese learner studying the source language. Explain key grammar, vocabulary, or idioms used in the source text.`;
     }
+
+    const notesPrompt = `You are a language tutor.
+
+First translate ${langContext}, then write learning notes.
+
+${notesInstruction}
+
+Output ONLY the notes as HTML (use <p> for paragraphs and <strong> for important terms). No other text.
+
+Text:
+${text}`;
+
+    let notesPromise = callGemini(apiKey, notesPrompt)
+        .then((notes) => {
+            if (lastSourceText !== text) return;
+            // Clean up any markdown fences or extra wrapping
+            const cleaned = notes.replace(/```html\s*/g, "").replace(/```\s*/g, "").trim();
+            translationCache.notes = cleaned;
+            learningNotes.innerHTML = cleaned;
+            learningSection.style.display = "block";
+        })
+        .catch(() => {
+            // Silently fail for notes — translation still works
+        });
+
+    // Fire-and-forget all promises (handled internally)
+    Promise.allSettled([normalPromise, stylesPromise, notesPromise]);
 }
 
 async function callGemini(apiKey, prompt) {

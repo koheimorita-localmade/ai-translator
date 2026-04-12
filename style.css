@@ -394,8 +394,22 @@ textarea::placeholder {
 }
 
 .style-tab.loading {
-    opacity: 0.5;
+    opacity: 0.6;
     pointer-events: none;
+    position: relative;
+}
+
+.style-tab.loading::before {
+    content: "";
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    margin-right: 4px;
+    vertical-align: middle;
+    border: 1.5px solid var(--text-secondary);
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
 }
 
 .result-header {
@@ -462,6 +476,18 @@ textarea::placeholder {
 
 .learning-notes strong {
     color: var(--primary);
+}
+
+.spinner-inline {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    margin-right: 6px;
+    vertical-align: middle;
+    border: 1.5px solid var(--amber);
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
 }
 
 /* Modal */
