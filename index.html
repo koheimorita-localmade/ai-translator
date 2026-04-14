@@ -253,6 +253,7 @@
                     <div class="flashcard-section flashcard-question">
                         <div class="flashcard-lang-tag" id="question-lang-tag">-</div>
                         <div id="question-text" class="flashcard-text"></div>
+                        <span id="question-pos" class="flashcard-pos" style="display:none;"></span>
                         <button id="speak-question-btn" class="icon-btn flashcard-speak" aria-label="読み上げ">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
@@ -264,7 +265,19 @@
                     <div id="answer-block" class="flashcard-section flashcard-answer" style="display:none;">
                         <div class="flashcard-lang-tag" id="answer-lang-tag">-</div>
                         <div id="answer-text" class="flashcard-text"></div>
+                        <span id="answer-pos" class="flashcard-pos" style="display:none;"></span>
                         <button id="speak-answer-btn" class="icon-btn flashcard-speak" aria-label="読み上げ">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                            </svg>
+                        </button>
+                    </div>
+
+                    <!-- Example sentence (revealed with answer) -->
+                    <div id="example-block" class="flashcard-section flashcard-example" style="display:none;">
+                        <div class="flashcard-lang-tag">例文</div>
+                        <div id="example-text" class="flashcard-text"></div>
+                        <button id="speak-example-btn" class="icon-btn flashcard-speak" aria-label="例文読み上げ">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
                             </svg>
@@ -445,6 +458,19 @@
                             <textarea id="save-tgt-text" rows="3" placeholder="訳文"></textarea>
                         </div>
 
+                        <div class="form-group">
+                            <label class="label-with-action">
+                                <span>品詞 <span class="form-hint-inline">(自動判定)</span></span>
+                                <button id="save-regenerate-btn" class="text-btn small-text-btn" type="button" style="display:none;">再生成</button>
+                            </label>
+                            <input type="text" id="save-pos" class="simple-input" placeholder="保存時に自動入力 (名詞 / 動詞 / 句 / 文 など)">
+                        </div>
+
+                        <div class="form-group">
+                            <label>例文 <span class="form-hint-inline">(品詞が「文」以外なら自動生成)</span></label>
+                            <textarea id="save-example" rows="2" placeholder="保存時に自動生成"></textarea>
+                        </div>
+
                         <p class="form-hint" id="save-style-hint"></p>
                         <button id="save-confirm-btn" class="translate-btn">カードを保存</button>
                     </div>
@@ -504,6 +530,19 @@
                     <div class="form-group">
                         <label for="edit-style">スタイル</label>
                         <input type="text" id="edit-style" class="simple-input" placeholder="normal / casual / formal / advanced など">
+                    </div>
+
+                    <div class="form-group">
+                        <label class="label-with-action">
+                            <span>品詞</span>
+                            <button id="edit-regenerate-btn" class="text-btn small-text-btn" type="button">AI再生成</button>
+                        </label>
+                        <input type="text" id="edit-pos" class="simple-input" placeholder="名詞 / 動詞 / 句 / 文 など">
+                    </div>
+
+                    <div class="form-group">
+                        <label>例文</label>
+                        <textarea id="edit-example" rows="2" placeholder="ターゲット言語の例文"></textarea>
                     </div>
 
                     <div class="card-meta-info" id="card-meta-info"></div>

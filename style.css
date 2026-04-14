@@ -1270,6 +1270,44 @@ textarea::placeholder {
     color: var(--primary);
 }
 
+.flashcard-pos {
+    display: inline-block;
+    margin-top: 8px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: rgba(79, 70, 229, 0.08);
+    color: var(--primary);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.flashcard-example {
+    background: linear-gradient(135deg, #fffbeb, #fef3c7);
+    border-color: #fde68a;
+}
+
+.flashcard-example .flashcard-text {
+    font-size: 16px;
+    font-style: italic;
+}
+
+.flashcard-example .flashcard-lang-tag {
+    color: var(--amber);
+    border-color: #fde68a;
+}
+
+.form-hint-inline {
+    font-size: 11px;
+    color: var(--text-secondary);
+    font-weight: 400;
+    margin-left: 4px;
+}
+
+.small-text-btn {
+    font-size: 12px !important;
+    padding: 2px 8px !important;
+}
+
 /* Feedback buttons */
 .feedback-buttons {
     display: grid;

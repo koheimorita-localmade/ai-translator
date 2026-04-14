@@ -108,7 +108,12 @@ const answerTextEl = document.getElementById("answer-text");
 const answerBlock = document.getElementById("answer-block");
 const speakQuestionBtn = document.getElementById("speak-question-btn");
 const speakAnswerBtn = document.getElementById("speak-answer-btn");
+const speakExampleBtn = document.getElementById("speak-example-btn");
 const showAnswerBtn = document.getElementById("show-answer-btn");
+const questionPosEl = document.getElementById("question-pos");
+const answerPosEl = document.getElementById("answer-pos");
+const exampleBlock = document.getElementById("example-block");
+const exampleTextEl = document.getElementById("example-text");
 const feedbackButtons = document.getElementById("feedback-buttons");
 const autoplayToggleBtn = document.getElementById("autoplay-toggle-btn");
 const autoplayCountdown = document.getElementById("autoplay-countdown");
@@ -144,6 +149,9 @@ const saveStyleHint = document.getElementById("save-style-hint");
 const saveSelectionNote = document.getElementById("save-selection-note");
 const saveConfirmBtn = document.getElementById("save-confirm-btn");
 const saveStatus = document.getElementById("save-status");
+const savePosInput = document.getElementById("save-pos");
+const saveExampleInput = document.getElementById("save-example");
+const saveRegenerateBtn = document.getElementById("save-regenerate-btn");
 const extractStartBtn = document.getElementById("extract-start-btn");
 const extractCandidates = document.getElementById("extract-candidates");
 const saveExtractConfirmBtn = document.getElementById("save-extract-confirm-btn");
@@ -168,6 +176,9 @@ const cardDeleteConfirm = document.getElementById("card-delete-confirm");
 const cardDeleteCancel = document.getElementById("card-delete-cancel");
 const cardDeleteExecute = document.getElementById("card-delete-execute");
 const cardEditStatus = document.getElementById("card-edit-status");
+const editPosInput = document.getElementById("edit-pos");
+const editExampleInput = document.getElementById("edit-example");
+const editRegenerateBtn = document.getElementById("edit-regenerate-btn");
 
 // ---- State ----
 let isTranslating = false;
@@ -290,6 +301,10 @@ function bindEvents() {
     cardDeleteExecute.addEventListener("click", confirmDeleteCard);
     editSpeakA.addEventListener("click", () => speakFromEdit("a"));
     editSpeakB.addEventListener("click", () => speakFromEdit("b"));
+    editRegenerateBtn.addEventListener("click", () => regeneratePosExampleForEdit());
+
+    // Save modal: regenerate POS/example
+    saveRegenerateBtn.addEventListener("click", () => generatePosExampleForSave({ force: true }));
 
     // Study mode
     studyPairSelect.addEventListener("change", updateStudyStats);
@@ -313,6 +328,7 @@ function bindEvents() {
     showAnswerBtn.addEventListener("click", revealAnswer);
     speakQuestionBtn.addEventListener("click", () => speakText(questionTextEl.textContent, study.currentQuestionLang));
     speakAnswerBtn.addEventListener("click", () => speakText(answerTextEl.textContent, study.currentAnswerLang));
+    speakExampleBtn.addEventListener("click", () => speakText(exampleTextEl.textContent, study.currentExampleLang));
     autoplayToggleBtn.addEventListener("click", toggleAutoplay);
     voiceFeedbackBtn.addEventListener("click", toggleVoiceFeedback);
     feedbackButtons.querySelectorAll(".feedback-btn").forEach((btn) => {
@@ -1210,6 +1226,9 @@ function openSaveModal() {
     updateSaveLangLabels();
     saveSrcText.value = srcText;
     saveTgtText.value = tgtText;
+    savePosInput.value = "";
+    saveExampleInput.value = "";
+    saveRegenerateBtn.style.display = "none";
 
     const styleLabel = { normal: "ノーマル", casual: "カジュアル", formal: "フォーマル", advanced: "アドバンス" }[activeStyle];
     saveStyleHint.textContent = `保存するスタイル: ${styleLabel}`;
@@ -1225,6 +1244,9 @@ function openSaveModal() {
     // Language select sync
     saveSrcLangSelect.onchange = updateSaveLangLabels;
     saveTgtLangSelect.onchange = updateSaveLangLabels;
+
+    // Auto-generate POS + example for the target-language text
+    generatePosExampleForSave();
 }
 
 function updateSaveLangLabels() {
@@ -1292,6 +1314,8 @@ async function confirmSaveCard() {
         langB: normalized.langB,
         textB: normalized.textB,
         style: activeStyle,
+        partOfSpeech: savePosInput.value.trim(),
+        example: saveExampleInput.value.trim(),
     };
 
     saveStatus.textContent = "保存中...";
@@ -1319,6 +1343,102 @@ async function confirmSaveCard() {
         saveStatus.className = "key-status error";
     } finally {
         saveConfirmBtn.disabled = false;
+    }
+}
+
+// ---- POS / Example AI generation ----
+
+// Returns the "target language" side info for a given pair-like object.
+// In our app the user is a Japanese learner, so the target = the non-Japanese side.
+function pickTargetLangSide(srcLang, srcText, tgtLang, tgtText) {
+    if (srcLang === "ja") return { lang: tgtLang, text: tgtText };
+    if (tgtLang === "ja") return { lang: srcLang, text: srcText };
+    // Neither side is Japanese — default to the target (translation result)
+    return { lang: tgtLang, text: tgtText };
+}
+
+async function generatePosExampleForSave(opts = {}) {
+    const apiKey = getApiKey();
+    if (!apiKey) return;
+    if (!opts.force && (savePosInput.value.trim() || saveExampleInput.value.trim())) {
+        // already filled by user — don't overwrite
+        return;
+    }
+
+    const srcLang = saveSrcLangSelect.value;
+    const tgtLang = saveTgtLangSelect.value;
+    const srcText = saveSrcText.value.trim();
+    const tgtText = saveTgtText.value.trim();
+    if (!srcText || !tgtText) return;
+
+    const { lang: targetLang, text: targetText } = pickTargetLangSide(srcLang, srcText, tgtLang, tgtText);
+
+    savePosInput.value = "";
+    savePosInput.placeholder = "判定中...";
+    saveExampleInput.value = "";
+    saveExampleInput.placeholder = "生成中...";
+
+    try {
+        const result = await callPosExampleApi(apiKey, targetLang, targetText);
+        savePosInput.value = result.partOfSpeech || "";
+        saveExampleInput.value = result.example || "";
+        saveRegenerateBtn.style.display = "inline";
+    } catch (error) {
+        savePosInput.placeholder = "判定失敗 (手動入力可)";
+        saveExampleInput.placeholder = "生成失敗 (手動入力可)";
+        saveRegenerateBtn.style.display = "inline";
+    }
+}
+
+async function callPosExampleApi(apiKey, targetLang, targetText) {
+    const langName = LANG_NAMES[targetLang] || targetLang;
+    const prompt = `Analyze the following ${langName} text and respond ONLY in this JSON format (no markdown fences, no extra text):
+
+{
+  "partOfSpeech": "Japanese label of the grammatical category. Use one of: 名詞, 動詞, 形容詞, 副詞, 前置詞, 接続詞, 代名詞, 句, 文, その他",
+  "example": "A natural ${langName} example sentence (one sentence, ~10-15 words) using this exact text. If partOfSpeech is 文 (already a sentence), set this to empty string."
+}
+
+Text: "${targetText.replace(/"/g, '\\"')}"`;
+
+    const raw = await callGemini(apiKey, prompt);
+    const jsonStr = raw.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+    const parsed = JSON.parse(jsonStr);
+    return {
+        partOfSpeech: (parsed.partOfSpeech || "").trim(),
+        example: (parsed.example || "").trim(),
+    };
+}
+
+async function regeneratePosExampleForEdit() {
+    if (!currentEditingCardId) return;
+    const card = cardsCache.find((c) => c.id === currentEditingCardId);
+    if (!card) return;
+
+    const apiKey = getApiKey();
+    if (!apiKey) {
+        showToast("Gemini APIキーが必要です");
+        return;
+    }
+
+    const { lang: targetLang, text: targetText } = pickTargetLangSide(card.langA, editTextA.value.trim(), card.langB, editTextB.value.trim());
+    if (!targetText) return;
+
+    editPosInput.placeholder = "判定中...";
+    editExampleInput.placeholder = "生成中...";
+    editRegenerateBtn.disabled = true;
+
+    try {
+        const result = await callPosExampleApi(apiKey, targetLang, targetText);
+        editPosInput.value = result.partOfSpeech || "";
+        editExampleInput.value = result.example || "";
+        showToast("再生成しました");
+    } catch (error) {
+        showToast(`再生成失敗: ${error.message}`);
+    } finally {
+        editPosInput.placeholder = "名詞 / 動詞 / 句 / 文 など";
+        editExampleInput.placeholder = "ターゲット言語の例文";
+        editRegenerateBtn.disabled = false;
     }
 }
 
@@ -1531,6 +1651,8 @@ function openCardEdit(card) {
     editTextA.value = card.textA || "";
     editTextB.value = card.textB || "";
     editStyleInput.value = card.style || "";
+    editPosInput.value = card.partOfSpeech || "";
+    editExampleInput.value = card.example || "";
 
     cardEditStatus.textContent = "";
     cardEditStatus.className = "key-status";
@@ -1675,6 +1797,8 @@ async function confirmUpdateCard() {
     const textA = editTextA.value.trim();
     const textB = editTextB.value.trim();
     const style = editStyleInput.value.trim();
+    const partOfSpeech = editPosInput.value.trim();
+    const example = editExampleInput.value.trim();
     if (!textA || !textB) {
         cardEditStatus.textContent = "両方のテキストを入力してください";
         cardEditStatus.className = "key-status error";
@@ -1686,10 +1810,16 @@ async function confirmUpdateCard() {
     cardEditStatus.className = "key-status";
 
     try {
-        await dbUpdatePair({ id: currentEditingCardId, textA, textB, style });
+        await dbUpdatePair({ id: currentEditingCardId, textA, textB, style, partOfSpeech, example });
         // Update local cache
         const card = cardsCache.find((c) => c.id === currentEditingCardId);
-        if (card) { card.textA = textA; card.textB = textB; card.style = style; }
+        if (card) {
+            card.textA = textA;
+            card.textB = textB;
+            card.style = style;
+            card.partOfSpeech = partOfSpeech;
+            card.example = example;
+        }
         renderCards();
         cardEditStatus.textContent = "更新しました";
         cardEditStatus.className = "key-status success";
@@ -1736,6 +1866,7 @@ const study = {
     currentCard: null,
     currentQuestionLang: null,
     currentAnswerLang: null,
+    currentExampleLang: null,
     sessionCount: 0,
     answered: false,
     autoplay: false,
@@ -1978,6 +2109,32 @@ function loadNextCard() {
     answerLangTag.textContent = LANG_NAMES[aLang] || aLang;
     answerTextEl.textContent = aText;
 
+    // Part of speech: show on the target-language (non-Japanese) side.
+    // - If question is the target lang → show POS with question
+    // - If answer is the target lang → show POS with answer (revealed later)
+    const pos = card.partOfSpeech || "";
+    questionPosEl.style.display = "none";
+    answerPosEl.style.display = "none";
+    if (pos) {
+        if (qLang !== "ja") {
+            questionPosEl.textContent = pos;
+            questionPosEl.style.display = "inline-block";
+        }
+        if (aLang !== "ja") {
+            answerPosEl.textContent = pos;
+            // Visibility deferred to revealAnswer (answer is hidden initially)
+        }
+    }
+
+    // Example sentence: only revealed at answer time (regardless of direction)
+    study.currentExampleLang = card.langA === "ja" ? card.langB : card.langA;
+    exampleBlock.style.display = "none";
+    if (card.example && pos !== "文") {
+        exampleTextEl.textContent = card.example;
+    } else {
+        exampleTextEl.textContent = "";
+    }
+
     answerBlock.style.display = "none";
     showAnswerBtn.style.display = "block";
     feedbackButtons.style.display = "none";
@@ -2007,12 +2164,23 @@ function revealAnswer() {
     showAnswerBtn.style.display = "none";
     feedbackButtons.style.display = "grid";
 
-    // Auto-speak answer, then chain next-card countdown if autoplay
+    // Show POS on the answer side if it belongs there
+    if (answerPosEl.textContent) {
+        answerPosEl.style.display = "inline-block";
+    }
+
+    // Show example sentence (always at answer reveal — never at question to avoid hints)
+    const hasExample = exampleTextEl.textContent && exampleTextEl.textContent.trim();
+    if (hasExample) {
+        exampleBlock.style.display = "block";
+    }
+
+    // Auto-speak answer → example (if any) → countdown
     setTimeout(() => {
         if (!study.active) return;
         speakText(answerTextEl.textContent, study.currentAnswerLang, () => {
-            if (study.autoplay && study.active && !study.answered) {
-                // Start voice recognition if enabled (listens during countdown)
+            const startListenCycle = () => {
+                if (!study.autoplay || !study.active || study.answered) return;
                 if (study.voiceFeedback) {
                     startVoiceRecognition((quality, transcript) => {
                         submitFeedback(quality, { fromVoice: true });
@@ -2020,12 +2188,19 @@ function revealAnswer() {
                 }
                 startCountdown(() => {
                     stopVoiceRecognition();
-                    // No feedback given → skip scoring
                     if (study.active && !study.answered) {
                         study.answered = true;
                         loadNextCard();
                     }
                 }, { listening: study.voiceFeedback });
+            };
+
+            // If example exists and is not a sentence-type card, read it next
+            const exampleText = exampleTextEl.textContent && exampleTextEl.textContent.trim();
+            if (exampleText) {
+                speakText(exampleText, study.currentExampleLang, startListenCycle);
+            } else {
+                startListenCycle();
             }
         });
     }, 200);

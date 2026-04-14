@@ -13,7 +13,7 @@
 const SHEET_PAIRS = "pairs";
 const SHEET_SCORES = "scores";
 
-const PAIRS_HEADERS = ["id", "pairKey", "langA", "textA", "langB", "textB", "style", "createdAt"];
+const PAIRS_HEADERS = ["id", "pairKey", "langA", "textA", "langB", "textB", "style", "createdAt", "partOfSpeech", "example"];
 const SCORES_HEADERS = ["pairId", "direction", "easeFactor", "interval", "nextReview", "lastReviewed", "repetitions"];
 
 // ---------- Entry points ----------
@@ -75,10 +75,25 @@ function getSheet(name) {
 }
 
 function ensureHeaders() {
-  const pairs = getSheet(SHEET_PAIRS);
-  if (pairs.getLastRow() === 0) pairs.appendRow(PAIRS_HEADERS);
-  const scores = getSheet(SHEET_SCORES);
-  if (scores.getLastRow() === 0) scores.appendRow(SCORES_HEADERS);
+  ensureSheetHeaders(SHEET_PAIRS, PAIRS_HEADERS);
+  ensureSheetHeaders(SHEET_SCORES, SCORES_HEADERS);
+}
+
+function ensureSheetHeaders(sheetName, requiredHeaders) {
+  const sheet = getSheet(sheetName);
+  if (sheet.getLastRow() === 0) {
+    sheet.appendRow(requiredHeaders);
+    return;
+  }
+  // Auto-migrate: append any missing headers as new columns
+  const lastCol = sheet.getLastColumn();
+  const existingHeaders = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  const missing = requiredHeaders.filter(h => existingHeaders.indexOf(h) === -1);
+  if (missing.length > 0) {
+    missing.forEach((h, i) => {
+      sheet.getRange(1, lastCol + 1 + i).setValue(h);
+    });
+  }
 }
 
 function rowsToObjects(sheet) {
@@ -119,32 +134,40 @@ function savePair(pair) {
 
   const id = pair.id || Utilities.getUuid();
   const createdAt = new Date().toISOString();
-  sheet.appendRow([
+  // Build row in PAIRS_HEADERS order (auto-extends to whatever columns exist)
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const rowMap = {
     id,
-    pair.pairKey || "",
-    pair.langA || "",
-    pair.textA || "",
-    pair.langB || "",
-    pair.textB || "",
-    pair.style || "",
-    createdAt
-  ]);
+    pairKey: pair.pairKey || "",
+    langA: pair.langA || "",
+    textA: pair.textA || "",
+    langB: pair.langB || "",
+    textB: pair.textB || "",
+    style: pair.style || "",
+    createdAt,
+    partOfSpeech: pair.partOfSpeech || "",
+    example: pair.example || ""
+  };
+  const row = headers.map(h => rowMap[h] !== undefined ? rowMap[h] : "");
+  sheet.appendRow(row);
   return { id, created: true };
 }
 
 function updatePair(pair) {
   if (!pair || !pair.id) throw new Error("pair.id is required");
   const sheet = getSheet(SHEET_PAIRS);
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
   const data = sheet.getDataRange().getValues();
   for (let i = 1; i < data.length; i++) {
     if (data[i][0] === pair.id) {
       const row = i + 1;
-      if (pair.pairKey !== undefined) sheet.getRange(row, 2).setValue(pair.pairKey);
-      if (pair.langA   !== undefined) sheet.getRange(row, 3).setValue(pair.langA);
-      if (pair.textA   !== undefined) sheet.getRange(row, 4).setValue(pair.textA);
-      if (pair.langB   !== undefined) sheet.getRange(row, 5).setValue(pair.langB);
-      if (pair.textB   !== undefined) sheet.getRange(row, 6).setValue(pair.textB);
-      if (pair.style   !== undefined) sheet.getRange(row, 7).setValue(pair.style);
+      // For every field present on `pair`, find its column index and update.
+      Object.keys(pair).forEach(key => {
+        if (key === "id") return;
+        const col = headers.indexOf(key);
+        if (col === -1) return; // unknown column — skip silently
+        sheet.getRange(row, col + 1).setValue(pair[key]);
+      });
       return { updated: true };
     }
   }
