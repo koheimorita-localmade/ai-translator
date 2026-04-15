@@ -248,6 +248,8 @@ function init() {
     updateTranslateButton();
     // Fetch cards on load if GAS is configured
     if (getGasUrl()) fetchAllFromDb().catch(() => {});
+    // Handle ?capture=... URL parameter for quick translate + inbox from Alfred etc.
+    handleCaptureFromURL();
 }
 
 function bindEvents() {
@@ -3104,6 +3106,103 @@ function cleanupInboxAfterSave() {
     pendingInboxItem = null;
     updateInboxBadge();
     if (inboxView.style.display !== "none") renderInbox();
+}
+
+// ============================================================
+// URL ?capture=... handler (Alfred / web search style entry)
+// ============================================================
+//
+// When the app is opened with a ?capture= parameter in the URL,
+// treat it as a quick translation request from an external tool
+// (Alfred, bookmarklet, shortcuts etc.). Flow:
+//   1. Pre-fill source text with the captured value
+//   2. Auto-trigger translation (if Gemini API key is set)
+//   3. Background: POST the raw text to the inbox so it's recoverable later
+//   4. Remember the inbox item id so saving as a full card removes it
+//
+// URL params:
+//   ?capture=<text>        — required
+//   ?srcLang=<code>        — optional language hint (en/ja/zh etc.)
+//   ?source=<label>        — optional source label (defaults to "alfred")
+
+function handleCaptureFromURL() {
+    let params;
+    try {
+        params = new URL(window.location.href).searchParams;
+    } catch {
+        return;
+    }
+    const capture = params.get("capture");
+    if (!capture) return;
+
+    const text = capture.trim();
+    if (!text) return;
+
+    const srcLang = params.get("srcLang") || "";
+    const source = params.get("source") || "alfred";
+
+    // Ensure we're in the translate view
+    switchMode("translate");
+
+    // Pre-fill and reveal in the textarea
+    sourceText.value = text;
+    onSourceInput();
+
+    // Optional: reflect the srcLang selector if provided
+    if (srcLang && sourceLang.querySelector(`option[value="${srcLang}"]`)) {
+        sourceLang.value = srcLang;
+    }
+
+    // Fire translation and inbox save in parallel (both best-effort)
+    const hasKey = !!getApiKey();
+    if (hasKey) {
+        // Give the UI a beat to settle before translating
+        setTimeout(() => handleTranslate(), 100);
+    } else {
+        showToast("Gemini APIキー未設定のため翻訳はスキップ");
+    }
+
+    if (getGasUrl()) {
+        captureToInbox(text, { srcLang, source }).catch((err) => {
+            console.warn("Inbox auto-save failed:", err);
+        });
+    }
+
+    // Strip the capture params from the URL so a reload doesn't re-trigger
+    try {
+        const url = new URL(window.location.href);
+        url.searchParams.delete("capture");
+        url.searchParams.delete("srcLang");
+        url.searchParams.delete("source");
+        window.history.replaceState({}, "", url.toString());
+    } catch {}
+}
+
+async function captureToInbox(text, opts = {}) {
+    const payload = {
+        text,
+        srcLang: opts.srcLang || detectSourceLang(text),
+        source: opts.source || "alfred",
+    };
+    const result = await gasPost("quickCapture", payload);
+    if (result && result.id) {
+        const item = {
+            id: result.id,
+            text,
+            srcLang: payload.srcLang,
+            source: payload.source,
+            note: "",
+            createdAt: new Date().toISOString(),
+            processed: false,
+        };
+        // Cache locally and wire up pendingInboxItem so saving this as a
+        // full card will remove the inbox entry automatically.
+        inboxCache.push(item);
+        pendingInboxItem = item;
+        updateInboxBadge();
+        if (inboxView.style.display !== "none") renderInbox();
+        showToast("受信箱に保存しました");
+    }
 }
 
 // ---- Start ----

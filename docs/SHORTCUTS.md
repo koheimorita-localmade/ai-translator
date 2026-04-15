@@ -191,26 +191,92 @@ https://script.google.com/macros/s/AKfy...長い文字列.../exec
 
 ---
 
-## レシピ3: macOS Alfred（クエリ検索風）
+## レシピ3: macOS Alfred（クエリ検索で翻訳 + 受信箱保存）
 
-Alfred の **Script Filter** または **Workflow** を使います。
+Alfred のタイプボックスに単語を打ち込むと、ブラウザで **Webアプリが開いて翻訳結果が表示され、同時に inbox にも自動保存** される仕組みです。`?capture=` URLパラメータが全部面倒見てくれるので、Alfred側の設定は最小限で済みます。
 
-### 手っ取り早いワークフロー
-1. Alfred Preferences > Workflows > 新規 > Blank Workflow
-2. **Keyword** トリガーを追加: `cap {query}`
-3. **Run Script** アクション（言語: `/bin/bash`）に以下を設定:
+### 方式A: Alfred Custom Web Search（推奨・最もシンプル）
+
+**セットアップ手順:**
+
+1. Alfred Preferences を開く
+2. **Features > Web Search > Add Custom Search**
+3. 以下を設定:
+
+   | 項目 | 値 |
+   |---|---|
+   | **Search URL** | `https://koheimorita-localmade.github.io/myfirsttest/?capture={query}` |
+   | **Title** | `Translate "{query}"` (任意) |
+   | **Keyword** | `trans` (好みで) |
+   | **Validation based on** | `None` |
+
+4. **Save** をクリック
+
+**使い方:**
+
+1. Alfred を起動（通常は `⌥Space`）
+2. `trans continuously` と入力 → Enter
+3. ブラウザに Webアプリが開く
+4. `continuously` が翻訳元に入力済み → 自動で翻訳実行
+5. 翻訳結果が表示されると同時に **受信箱にも保存** される
+6. そのまま閉じれば後で処理可能、「保存」を押せば即カード化（inboxアイテムは自動削除）
+
+**挙動の詳細:**
+
+- URL パラメータ `capture` を検知すると、アプリが自動で翻訳画面に切り替え
+- Gemini APIキーが設定済みなら自動翻訳を発火
+- GAS URL が設定済みなら裏でinboxにも `quickCapture` で保存
+- `showToast("受信箱に保存しました")` の通知が出る
+- 処理後は URL の `capture` パラメータが自動削除される（リロードで2重投入されない）
+
+### 方式B: Alfred Workflow で結果をAlfred内に表示（発展形）
+
+ブラウザを開かずに Alfred の Large Type で翻訳結果を見たい場合の発展形。スクリプトで Gemini を直接叩きます。
+
+<details>
+<summary>手順を開く</summary>
+
+1. Alfred Preferences > **Workflows** > 新規 Blank Workflow
+2. **Inputs > Keyword** を追加: `tr {query}`
+3. **Actions > Run Script** を接続、言語 `/bin/bash`:
+
    ```bash
-   GAS_URL="https://script.google.com/macros/s/AKfycbx.../exec"
+   API_KEY="YOUR_GEMINI_API_KEY"
+   GAS_URL="https://script.google.com/macros/s/.../exec"
+   QUERY="{query}"
+
+   # 1. 翻訳をGeminiから取得
+   PROMPT="Translate to Japanese if the text is in English, otherwise to English. Output ONLY the translation.\n\n$QUERY"
+   TRANSLATION=$(curl -s "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$API_KEY" \
+     -H 'Content-Type: application/json' \
+     -d "{\"contents\":[{\"parts\":[{\"text\":\"$PROMPT\"}]}]}" \
+     | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['candidates'][0]['content']['parts'][0]['text'].strip())")
+
+   # 2. 同時にinbox保存
    curl -sL -X POST "$GAS_URL" \
-     -H "Content-Type: text/plain;charset=utf-8" \
-     --data "{\"action\":\"quickCapture\",\"text\":\"{query}\",\"source\":\"shortcut\"}"
+     -H 'Content-Type: text/plain;charset=utf-8' \
+     --data "{\"action\":\"quickCapture\",\"text\":\"$QUERY\",\"source\":\"alfred\"}" > /dev/null
+
+   # 3. 結果を返す (Alfred Large Type で表示される)
+   echo "$TRANSLATION"
    ```
-4. **Post Notification** アクションをつなげて通知を表示
+4. **Outputs > Large Type** を接続 → スクリプトの標準出力が巨大表示される
+5. （オプション）**Outputs > Copy to Clipboard** も接続 → Cmd+V で貼り付けもできる
 
-使用例: Alfred で `cap make ends meet` と打って Enter → 保存完了通知
+**使い方:** Alfred で `tr continuously` → Enter → Alfred が Gemini 呼んで翻訳を Large Type 表示、裏でinboxにも保存。
 
-### Mac OS 標準 Spotlight から使いたい場合
-Automator で Quick Action を作成 → AppleScript で `do shell script "curl ..."` を実行 → Services メニューから呼べる。詳細が必要なら別途。
+**注意**: スクリプト内に APIキーを直書きすることになるので、Workflow自体の管理は慎重に。環境変数を使う工夫もあり。
+
+</details>
+
+### どちらを選ぶ？
+
+| 方式 | 手軽さ | 翻訳表示 | 学習カード化までの距離 |
+|---|---|---|---|
+| **A: Custom Web Search** | ★★★（設定3分） | ブラウザ | ブラウザで「保存」ワンタップ |
+| **B: Workflow** | ★（スクリプト必要） | Alfred内Large Type | 保存は自動、カード化は後で |
+
+**まずは方式Aで試す** のがおすすめ。ブラウザが開くのが鬱陶しくなったら方式Bへ。
 
 ---
 
