@@ -100,6 +100,12 @@ const inboxCount = document.getElementById("inbox-count");
 const inboxListEl = document.getElementById("inbox-list");
 const inboxEmpty = document.getElementById("inbox-empty");
 const inboxRefreshBtn = document.getElementById("inbox-refresh-btn");
+const inboxSelectToggleBtn = document.getElementById("inbox-select-toggle");
+const inboxSelectionBar = document.getElementById("inbox-selection-bar");
+const inboxSelectedCount = document.getElementById("inbox-selected-count");
+const inboxSelectAllBtn = document.getElementById("inbox-select-all");
+const inboxBulkDeleteBtn = document.getElementById("inbox-bulk-delete");
+const inboxSelectionCancelBtn = document.getElementById("inbox-selection-cancel");
 
 // Study view
 const studySetup = document.getElementById("study-setup");
@@ -144,6 +150,12 @@ const cardsRefreshBtn = document.getElementById("cards-refresh-btn");
 const cardsSearch = document.getElementById("cards-search");
 const cardsListEl = document.getElementById("cards-list");
 const cardsEmpty = document.getElementById("cards-empty");
+const cardsSelectToggleBtn = document.getElementById("cards-select-toggle");
+const cardsSelectionBar = document.getElementById("cards-selection-bar");
+const cardsSelectedCount = document.getElementById("cards-selected-count");
+const cardsSelectAllBtn = document.getElementById("cards-select-all");
+const cardsBulkDeleteBtn = document.getElementById("cards-bulk-delete");
+const cardsSelectionCancelBtn = document.getElementById("cards-selection-cancel");
 
 // Save modal
 const saveModal = document.getElementById("save-modal");
@@ -217,6 +229,12 @@ let pendingInboxItem = null;
 let pendingSave = null; // { srcLang, srcText, tgtLang, tgtText, style }
 let extractItems = []; // current extraction candidates
 let currentEditingCardId = null;
+
+// Selection mode state
+let cardsSelectMode = false;
+let cardsSelectedIds = new Set();
+let inboxSelectMode = false;
+let inboxSelectedIds = new Set();
 
 // ---- Init ----
 function init() {
@@ -307,9 +325,17 @@ function bindEvents() {
     // Cards view
     cardsRefreshBtn.addEventListener("click", () => fetchAllFromDb(true));
     cardsSearch.addEventListener("input", () => renderCards());
+    cardsSelectToggleBtn.addEventListener("click", () => toggleCardsSelectMode(true));
+    cardsSelectionCancelBtn.addEventListener("click", () => toggleCardsSelectMode(false));
+    cardsSelectAllBtn.addEventListener("click", selectAllVisibleCards);
+    cardsBulkDeleteBtn.addEventListener("click", bulkDeleteCards);
 
     // Inbox view
     inboxRefreshBtn.addEventListener("click", () => fetchAllFromDb(true));
+    inboxSelectToggleBtn.addEventListener("click", () => toggleInboxSelectMode(true));
+    inboxSelectionCancelBtn.addEventListener("click", () => toggleInboxSelectMode(false));
+    inboxSelectAllBtn.addEventListener("click", selectAllInbox);
+    inboxBulkDeleteBtn.addEventListener("click", bulkDeleteInbox);
 
     // Card edit
     closeCardEdit.addEventListener("click", closeCardEditModal);
@@ -1669,21 +1695,146 @@ function renderCards() {
 
     cardsEmpty.style.display = "none";
     cardsListEl.innerHTML = "";
+
+    // Update selected count badge if in selection mode
+    if (cardsSelectMode) {
+        updateCardsSelectionUI();
+    }
+
     filtered.forEach((card) => {
         const item = document.createElement("div");
-        item.className = "card-item";
-        item.innerHTML = `
-            <span class="card-pair-tag">${escapeHtml(card.langA || "")}↔${escapeHtml(card.langB || "")}</span>
-            ${card.style ? `<span class="card-style-tag">${escapeHtml(card.style)}</span>` : ""}
-            <div class="card-text-a"></div>
-            <div class="card-text-b"></div>
-        `;
-        item.querySelector(".card-text-a").textContent = card.textA || "";
-        item.querySelector(".card-text-b").textContent = card.textB || "";
+        const isSelected = cardsSelectedIds.has(card.id);
+        item.className = "card-item" + (cardsSelectMode ? " selection-mode" : " has-trash") + (isSelected ? " selected" : "");
 
-        item.addEventListener("click", () => openCardEdit(card));
+        if (cardsSelectMode) {
+            item.innerHTML = `
+                <div class="select-checkbox ${isSelected ? "checked" : ""}">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                        <polyline points="20 6 9 17 4 12"/>
+                    </svg>
+                </div>
+                <div class="card-item-body">
+                    <span class="card-pair-tag">${escapeHtml(card.langA || "")}↔${escapeHtml(card.langB || "")}</span>
+                    ${card.style ? `<span class="card-style-tag">${escapeHtml(card.style)}</span>` : ""}
+                    <div class="card-text-a"></div>
+                    <div class="card-text-b"></div>
+                </div>
+            `;
+            item.querySelector(".card-text-a").textContent = card.textA || "";
+            item.querySelector(".card-text-b").textContent = card.textB || "";
+            item.addEventListener("click", () => toggleCardSelection(card.id));
+        } else {
+            item.innerHTML = `
+                <button class="card-trash-btn" aria-label="削除">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="3 6 5 6 21 6"/>
+                        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                        <path d="M10 11v6M14 11v6"/>
+                        <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                    </svg>
+                </button>
+                <span class="card-pair-tag">${escapeHtml(card.langA || "")}↔${escapeHtml(card.langB || "")}</span>
+                ${card.style ? `<span class="card-style-tag">${escapeHtml(card.style)}</span>` : ""}
+                <div class="card-text-a"></div>
+                <div class="card-text-b"></div>
+            `;
+            item.querySelector(".card-text-a").textContent = card.textA || "";
+            item.querySelector(".card-text-b").textContent = card.textB || "";
+            item.addEventListener("click", () => openCardEdit(card));
+            item.querySelector(".card-trash-btn").addEventListener("click", (e) => {
+                e.stopPropagation();
+                quickDeleteCard(card);
+            });
+        }
+
         cardsListEl.appendChild(item);
     });
+}
+
+function toggleCardsSelectMode(active) {
+    cardsSelectMode = !!active;
+    cardsSelectedIds.clear();
+    cardsSelectionBar.style.display = active ? "flex" : "none";
+    cardsSelectToggleBtn.style.display = active ? "none" : "inline";
+    if (active) updateCardsSelectionUI();
+    renderCards();
+}
+
+function toggleCardSelection(id) {
+    if (cardsSelectedIds.has(id)) {
+        cardsSelectedIds.delete(id);
+    } else {
+        cardsSelectedIds.add(id);
+    }
+    updateCardsSelectionUI();
+    // Re-render to update checkbox visuals (simple but works)
+    renderCards();
+}
+
+function selectAllVisibleCards() {
+    const query = (cardsSearch.value || "").trim().toLowerCase();
+    const visible = cardsCache.filter((c) =>
+        !query ||
+        (c.textA || "").toLowerCase().includes(query) ||
+        (c.textB || "").toLowerCase().includes(query) ||
+        (c.pairKey || "").toLowerCase().includes(query)
+    );
+    const allSelected = visible.every((c) => cardsSelectedIds.has(c.id)) && visible.length > 0;
+    if (allSelected) {
+        visible.forEach((c) => cardsSelectedIds.delete(c.id));
+    } else {
+        visible.forEach((c) => cardsSelectedIds.add(c.id));
+    }
+    updateCardsSelectionUI();
+    renderCards();
+}
+
+function updateCardsSelectionUI() {
+    const n = cardsSelectedIds.size;
+    cardsSelectedCount.textContent = `${n}件選択中`;
+    cardsBulkDeleteBtn.disabled = n === 0;
+}
+
+async function bulkDeleteCards() {
+    const ids = [...cardsSelectedIds];
+    if (ids.length === 0) return;
+    if (!confirm(`選択した ${ids.length} 件のカードを削除しますか？\n（関連するスコアも削除されます）`)) return;
+
+    cardsBulkDeleteBtn.disabled = true;
+    cardsBulkDeleteBtn.textContent = `削除中 0/${ids.length}`;
+
+    let done = 0;
+    let failed = 0;
+    for (const id of ids) {
+        try {
+            await dbDeletePair(id);
+            cardsCache = cardsCache.filter((c) => c.id !== id);
+            scoresCache = scoresCache.filter((s) => s.pairId !== id);
+            done++;
+        } catch {
+            failed++;
+        }
+        cardsBulkDeleteBtn.textContent = `削除中 ${done + failed}/${ids.length}`;
+    }
+
+    cardsBulkDeleteBtn.textContent = "削除";
+    toggleCardsSelectMode(false);
+    showToast(`${done}件削除${failed > 0 ? `、${failed}件失敗` : ""}`);
+}
+
+async function quickDeleteCard(card) {
+    const preview = card.textA || card.textB || "";
+    if (!confirm(`このカードを削除しますか？\n\n${preview.slice(0, 60)}${preview.length > 60 ? "..." : ""}`)) return;
+
+    try {
+        await dbDeletePair(card.id);
+        cardsCache = cardsCache.filter((c) => c.id !== card.id);
+        scoresCache = scoresCache.filter((s) => s.pairId !== card.id);
+        renderCards();
+        showToast("削除しました");
+    } catch (error) {
+        showToast(`削除失敗: ${error.message}`);
+    }
 }
 
 // Tracks where the card-edit modal was opened from, so we can adjust the UI
@@ -2735,10 +2886,17 @@ function renderInbox() {
 
     inboxEmpty.style.display = "none";
     inboxListEl.innerHTML = "";
+
+    if (inboxSelectMode) updateInboxSelectionUI();
+
     items.forEach((item) => {
         const isNew = !seen.has(item.id);
+        const isSelected = inboxSelectedIds.has(item.id);
         const el = document.createElement("div");
-        el.className = "inbox-item" + (isNew ? " inbox-item-new" : "");
+        el.className = "inbox-item"
+            + (isNew && !inboxSelectMode ? " inbox-item-new" : "")
+            + (inboxSelectMode ? " selection-mode" : "")
+            + (isSelected ? " selected" : "");
         const sourceLabel = {
             voice: "🎤 音声",
             clipboard: "📋 クリップボード",
@@ -2747,38 +2905,122 @@ function renderInbox() {
             shortcut: "⚡ ショートカット",
         }[item.source] || item.source || "?";
 
-        el.innerHTML = `
-            <div class="inbox-item-meta">
-                ${isNew ? `<span class="inbox-new-dot">NEW</span>` : ""}
-                <span class="inbox-source-chip">${escapeHtml(sourceLabel)}</span>
-                <span>${escapeHtml(formatRelativeTime(item.createdAt))}</span>
-                ${item.srcLang ? `<span>${escapeHtml(item.srcLang)}</span>` : ""}
-            </div>
-            <div class="inbox-item-text"></div>
-            ${item.note ? `<div class="inbox-item-note"></div>` : ""}
-            <div class="inbox-item-actions">
-                <button class="inbox-process-btn" data-id="${escapeHtml(item.id)}">翻訳して保存</button>
-                ${isNew ? `<button class="inbox-markread-btn" data-id="${escapeHtml(item.id)}">既読</button>` : ""}
-                <button class="inbox-delete-btn" data-id="${escapeHtml(item.id)}">削除</button>
-            </div>
-        `;
-
-        el.querySelector(".inbox-item-text").textContent = item.text || "";
-        if (item.note) el.querySelector(".inbox-item-note").textContent = item.note;
-
-        el.querySelector(".inbox-process-btn").addEventListener("click", () => processInboxItem(item));
-        el.querySelector(".inbox-delete-btn").addEventListener("click", () => deleteInboxItem(item));
-        const markReadBtn = el.querySelector(".inbox-markread-btn");
-        if (markReadBtn) {
-            markReadBtn.addEventListener("click", () => {
-                markInboxSeen(item.id);
-                renderInbox();
-                updateInboxBadge();
-            });
+        if (inboxSelectMode) {
+            el.innerHTML = `
+                <div class="select-checkbox ${isSelected ? "checked" : ""}">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                        <polyline points="20 6 9 17 4 12"/>
+                    </svg>
+                </div>
+                <div class="inbox-item-body">
+                    <div class="inbox-item-meta">
+                        ${isNew ? `<span class="inbox-new-dot">NEW</span>` : ""}
+                        <span class="inbox-source-chip">${escapeHtml(sourceLabel)}</span>
+                        <span>${escapeHtml(formatRelativeTime(item.createdAt))}</span>
+                        ${item.srcLang ? `<span>${escapeHtml(item.srcLang)}</span>` : ""}
+                    </div>
+                    <div class="inbox-item-text"></div>
+                    ${item.note ? `<div class="inbox-item-note"></div>` : ""}
+                </div>
+            `;
+            el.querySelector(".inbox-item-text").textContent = item.text || "";
+            if (item.note) el.querySelector(".inbox-item-note").textContent = item.note;
+            el.addEventListener("click", () => toggleInboxSelection(item.id));
+        } else {
+            el.innerHTML = `
+                <div class="inbox-item-meta">
+                    ${isNew ? `<span class="inbox-new-dot">NEW</span>` : ""}
+                    <span class="inbox-source-chip">${escapeHtml(sourceLabel)}</span>
+                    <span>${escapeHtml(formatRelativeTime(item.createdAt))}</span>
+                    ${item.srcLang ? `<span>${escapeHtml(item.srcLang)}</span>` : ""}
+                </div>
+                <div class="inbox-item-text"></div>
+                ${item.note ? `<div class="inbox-item-note"></div>` : ""}
+                <div class="inbox-item-actions">
+                    <button class="inbox-process-btn">翻訳して保存</button>
+                    ${isNew ? `<button class="inbox-markread-btn">既読</button>` : ""}
+                    <button class="inbox-delete-btn">削除</button>
+                </div>
+            `;
+            el.querySelector(".inbox-item-text").textContent = item.text || "";
+            if (item.note) el.querySelector(".inbox-item-note").textContent = item.note;
+            el.querySelector(".inbox-process-btn").addEventListener("click", () => processInboxItem(item));
+            el.querySelector(".inbox-delete-btn").addEventListener("click", () => deleteInboxItem(item));
+            const markReadBtn = el.querySelector(".inbox-markread-btn");
+            if (markReadBtn) {
+                markReadBtn.addEventListener("click", () => {
+                    markInboxSeen(item.id);
+                    renderInbox();
+                    updateInboxBadge();
+                });
+            }
         }
 
         inboxListEl.appendChild(el);
     });
+}
+
+function toggleInboxSelectMode(active) {
+    inboxSelectMode = !!active;
+    inboxSelectedIds.clear();
+    inboxSelectionBar.style.display = active ? "flex" : "none";
+    inboxSelectToggleBtn.style.display = active ? "none" : "inline";
+    if (active) updateInboxSelectionUI();
+    renderInbox();
+}
+
+function toggleInboxSelection(id) {
+    if (inboxSelectedIds.has(id)) {
+        inboxSelectedIds.delete(id);
+    } else {
+        inboxSelectedIds.add(id);
+    }
+    updateInboxSelectionUI();
+    renderInbox();
+}
+
+function selectAllInbox() {
+    const allSelected = inboxCache.every((i) => inboxSelectedIds.has(i.id)) && inboxCache.length > 0;
+    if (allSelected) {
+        inboxSelectedIds.clear();
+    } else {
+        inboxCache.forEach((i) => inboxSelectedIds.add(i.id));
+    }
+    updateInboxSelectionUI();
+    renderInbox();
+}
+
+function updateInboxSelectionUI() {
+    const n = inboxSelectedIds.size;
+    inboxSelectedCount.textContent = `${n}件選択中`;
+    inboxBulkDeleteBtn.disabled = n === 0;
+}
+
+async function bulkDeleteInbox() {
+    const ids = [...inboxSelectedIds];
+    if (ids.length === 0) return;
+    if (!confirm(`選択した ${ids.length} 件の受信アイテムを削除しますか？`)) return;
+
+    inboxBulkDeleteBtn.disabled = true;
+    inboxBulkDeleteBtn.textContent = `削除中 0/${ids.length}`;
+
+    let done = 0;
+    let failed = 0;
+    for (const id of ids) {
+        try {
+            await gasPost("deleteInboxItem", { id });
+            inboxCache = inboxCache.filter((i) => i.id !== id);
+            done++;
+        } catch {
+            failed++;
+        }
+        inboxBulkDeleteBtn.textContent = `削除中 ${done + failed}/${ids.length}`;
+    }
+
+    inboxBulkDeleteBtn.textContent = "削除";
+    updateInboxBadge();
+    toggleInboxSelectMode(false);
+    showToast(`${done}件削除${failed > 0 ? `、${failed}件失敗` : ""}`);
 }
 
 function formatRelativeTime(isoStr) {

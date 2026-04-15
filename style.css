@@ -840,6 +840,137 @@ textarea::placeholder {
     color: var(--primary);
 }
 
+/* =====================================
+   Selection Mode (Cards / Inbox)
+   ===================================== */
+.header-actions {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+}
+
+.selection-bar {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 12px;
+    margin-top: 10px;
+    background: var(--primary-light);
+    border: 1.5px solid var(--primary);
+    border-radius: var(--radius);
+}
+
+.selection-count {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--primary);
+}
+
+.selection-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.selection-delete-btn {
+    padding: 8px 16px;
+    background: var(--danger);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all var(--transition);
+}
+
+.selection-delete-btn:hover:not(:disabled) {
+    background: #dc2626;
+}
+
+.selection-delete-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    background: var(--text-secondary);
+}
+
+/* Item checkboxes in selection mode */
+.select-checkbox {
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+    border: 2px solid var(--border);
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 10px;
+    color: transparent;
+    background: var(--surface);
+    transition: all var(--transition);
+}
+
+.select-checkbox.checked {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: white;
+}
+
+/* Selection mode affects layout of each row */
+.card-item.selection-mode,
+.inbox-item.selection-mode {
+    display: flex;
+    align-items: flex-start;
+    gap: 0;
+    cursor: pointer;
+}
+
+.card-item.selection-mode .card-item-body,
+.inbox-item.selection-mode .inbox-item-body {
+    flex: 1;
+    min-width: 0;
+}
+
+.card-item.selection-mode.selected,
+.inbox-item.selection-mode.selected {
+    border-color: var(--primary);
+    background: var(--primary-light);
+}
+
+/* Card trash quick-delete button */
+.card-trash-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all var(--transition);
+}
+
+.card-trash-btn:hover {
+    background: #fef2f2;
+    color: var(--danger);
+}
+
+.card-item {
+    position: relative;
+}
+
+.card-item.has-trash {
+    padding-right: 38px;
+}
+
 .mode-view {
     animation: fadeIn 0.2s ease;
 }
