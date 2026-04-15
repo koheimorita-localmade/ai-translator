@@ -699,6 +699,112 @@ textarea::placeholder {
     box-shadow: var(--shadow);
 }
 
+.inbox-badge {
+    display: inline-block;
+    min-width: 18px;
+    padding: 2px 6px;
+    margin-left: 4px;
+    border-radius: 999px;
+    background: var(--danger);
+    color: white;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+    vertical-align: middle;
+}
+
+/* Inbox cards */
+.inbox-item {
+    background: var(--surface);
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    transition: all var(--transition);
+}
+
+.inbox-item-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+.inbox-source-chip {
+    display: inline-block;
+    padding: 2px 8px;
+    background: var(--primary-light);
+    color: var(--primary);
+    border-radius: 999px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.inbox-item-text {
+    font-size: 15px;
+    color: var(--text);
+    line-height: 1.5;
+    word-break: break-word;
+    margin-bottom: 10px;
+}
+
+.inbox-item-note {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+    padding: 6px 10px;
+    background: var(--bg);
+    border-radius: 8px;
+    border-left: 3px solid var(--primary);
+}
+
+.inbox-item-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.inbox-process-btn {
+    flex: 1;
+    padding: 8px 12px;
+    background: var(--primary);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all var(--transition);
+}
+
+.inbox-process-btn:hover:not(:disabled) {
+    background: var(--primary-hover);
+}
+
+.inbox-process-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.inbox-delete-btn {
+    padding: 8px 14px;
+    background: transparent;
+    color: var(--text-secondary);
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all var(--transition);
+}
+
+.inbox-delete-btn:hover {
+    border-color: var(--danger);
+    color: var(--danger);
+}
+
 .mode-view {
     animation: fadeIn 0.2s ease;
 }

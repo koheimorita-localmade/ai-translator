@@ -12,9 +12,11 @@
 
 const SHEET_PAIRS = "pairs";
 const SHEET_SCORES = "scores";
+const SHEET_INBOX = "inbox";
 
 const PAIRS_HEADERS = ["id", "pairKey", "langA", "textA", "langB", "textB", "style", "createdAt", "partOfSpeech", "example"];
 const SCORES_HEADERS = ["pairId", "direction", "easeFactor", "interval", "nextReview", "lastReviewed", "repetitions"];
+const INBOX_HEADERS = ["id", "text", "srcLang", "note", "source", "createdAt", "processed"];
 
 // ---------- Entry points ----------
 
@@ -43,7 +45,7 @@ function handleRequest(action, params) {
     let result;
     switch (action) {
       case "ping":        result = { ok: true, time: new Date().toISOString() }; break;
-      case "listAll":     result = { pairs: listPairs(), scores: listScores() }; break;
+      case "listAll":     result = { pairs: listPairs(), scores: listScores(), inbox: listInbox() }; break;
       case "listPairs":   result = listPairs(); break;
       case "listScores":  result = listScores(); break;
       case "savePair":    result = savePair(params.pair); break;
@@ -51,6 +53,13 @@ function handleRequest(action, params) {
       case "deletePair":  result = deletePair(params.id); break;
       case "updateScore": result = updateScore(params.score); break;
       case "deleteScore": result = deleteScoreByDirection(params.pairId, params.direction); break;
+
+      // Inbox (quick capture)
+      case "quickCapture":    result = quickCapture(params); break;
+      case "listInbox":       result = listInbox(); break;
+      case "deleteInboxItem": result = deleteInboxItem(params.id); break;
+      case "markInboxProcessed": result = markInboxProcessed(params.id); break;
+
       default: throw new Error("Unknown action: " + (action || "(none)"));
     }
     return jsonResponse({ success: true, data: result });
@@ -77,6 +86,7 @@ function getSheet(name) {
 function ensureHeaders() {
   ensureSheetHeaders(SHEET_PAIRS, PAIRS_HEADERS);
   ensureSheetHeaders(SHEET_SCORES, SCORES_HEADERS);
+  ensureSheetHeaders(SHEET_INBOX, INBOX_HEADERS);
 }
 
 function ensureSheetHeaders(sheetName, requiredHeaders) {
@@ -244,4 +254,66 @@ function deleteScoreByDirection(pairId, direction) {
     }
   }
   throw new Error("Score not found");
+}
+
+// ---------- Inbox (quick capture) ----------
+
+function quickCapture(payload) {
+  const text = (payload && payload.text ? String(payload.text) : "").trim();
+  if (!text) throw new Error("text is required");
+
+  const sheet = getSheet(SHEET_INBOX);
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+
+  const id = payload.id || Utilities.getUuid();
+  const createdAt = new Date().toISOString();
+  const rowMap = {
+    id,
+    text,
+    srcLang: payload.srcLang || "",
+    note: payload.note || "",
+    source: payload.source || "manual",
+    createdAt,
+    processed: false
+  };
+  const row = headers.map(h => rowMap[h] !== undefined ? rowMap[h] : "");
+  sheet.appendRow(row);
+  return { id, created: true };
+}
+
+function listInbox() {
+  const all = rowsToObjects(getSheet(SHEET_INBOX));
+  return all.filter(item => {
+    const p = item.processed;
+    return !(p === true || p === "TRUE" || p === "true");
+  });
+}
+
+function deleteInboxItem(id) {
+  if (!id) throw new Error("id is required");
+  const sheet = getSheet(SHEET_INBOX);
+  const data = sheet.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][0] === id) {
+      sheet.deleteRow(i + 1);
+      return { deleted: true };
+    }
+  }
+  throw new Error("Inbox item not found: " + id);
+}
+
+function markInboxProcessed(id) {
+  if (!id) throw new Error("id is required");
+  const sheet = getSheet(SHEET_INBOX);
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0];
+  const processedCol = headers.indexOf("processed");
+  if (processedCol === -1) throw new Error("processed column missing");
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][0] === id) {
+      sheet.getRange(i + 1, processedCol + 1).setValue(true);
+      return { updated: true };
+    }
+  }
+  throw new Error("Inbox item not found: " + id);
 }

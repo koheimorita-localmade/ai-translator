@@ -91,6 +91,14 @@ const modeTabs = document.querySelectorAll(".mode-tab");
 const translateView = document.getElementById("translate-view");
 const studyView = document.getElementById("study-view");
 const cardsView = document.getElementById("cards-view");
+const inboxView = document.getElementById("inbox-view");
+
+// Inbox
+const inboxBadge = document.getElementById("inbox-badge");
+const inboxCount = document.getElementById("inbox-count");
+const inboxListEl = document.getElementById("inbox-list");
+const inboxEmpty = document.getElementById("inbox-empty");
+const inboxRefreshBtn = document.getElementById("inbox-refresh-btn");
 
 // Study view
 const studySetup = document.getElementById("study-setup");
@@ -199,6 +207,10 @@ let lastDetectedSrcLang = null;
 // DB local cache
 let cardsCache = []; // [{ id, pairKey, langA, textA, langB, textB, style, createdAt }]
 let scoresCache = []; // [{ pairId, direction, easeFactor, interval, nextReview, lastReviewed, repetitions }]
+let inboxCache = []; // [{ id, text, srcLang, note, source, createdAt, processed }]
+
+// When saving from an inbox item, store the item so we can delete it after save
+let pendingInboxItem = null;
 
 // Save modal state
 let pendingSave = null; // { srcLang, srcText, tgtLang, tgtText, style }
@@ -295,6 +307,9 @@ function bindEvents() {
     cardsRefreshBtn.addEventListener("click", () => fetchAllFromDb(true));
     cardsSearch.addEventListener("input", () => renderCards());
 
+    // Inbox view
+    inboxRefreshBtn.addEventListener("click", () => fetchAllFromDb(true));
+
     // Card edit
     closeCardEdit.addEventListener("click", closeCardEditModal);
     cardEditModal.querySelector(".modal-backdrop").addEventListener("click", closeCardEditModal);
@@ -347,12 +362,18 @@ function switchMode(mode) {
     translateView.style.display = mode === "translate" ? "block" : "none";
     studyView.style.display = mode === "study" ? "block" : "none";
     cardsView.style.display = mode === "cards" ? "block" : "none";
+    inboxView.style.display = mode === "inbox" ? "block" : "none";
 
     if (mode === "cards") {
         renderCards();
         if (cardsCache.length === 0 && getGasUrl()) {
             fetchAllFromDb().catch(() => {});
         }
+    }
+
+    if (mode === "inbox") {
+        renderInbox();
+        if (getGasUrl()) fetchAllFromDb().catch(() => {});
     }
 
     if (mode === "study") {
@@ -1179,7 +1200,10 @@ async function fetchAllFromDb(showFeedback = false) {
         const data = await gasGet("listAll");
         cardsCache = data.pairs || [];
         scoresCache = data.scores || [];
+        inboxCache = data.inbox || [];
         if (cardsView.style.display !== "none") renderCards();
+        if (inboxView && inboxView.style.display !== "none") renderInbox();
+        updateInboxBadge();
         if (showFeedback) showToast(`${cardsCache.length} 件のカードを取得しました`);
     } catch (error) {
         if (showFeedback) showToast(`取得失敗: ${error.message}`);
@@ -1261,6 +1285,9 @@ function updateSaveLangLabels() {
 
 function closeSaveModal() {
     saveModal.style.display = "none";
+    // If user cancels while processing an inbox item, clear the pending ref
+    // so the item stays in inbox for later
+    pendingInboxItem = null;
 }
 
 function switchSaveTab(tab) {
@@ -1342,6 +1369,17 @@ async function confirmSaveCard() {
                 createdAt: new Date().toISOString(),
             });
         }
+
+        // If this save came from an inbox item, delete the inbox entry
+        if (pendingInboxItem) {
+            const inboxId = pendingInboxItem.id;
+            gasPost("deleteInboxItem", { id: inboxId }).catch(() => {});
+            inboxCache = inboxCache.filter((i) => i.id !== inboxId);
+            pendingInboxItem = null;
+            updateInboxBadge();
+            if (inboxView.style.display !== "none") renderInbox();
+        }
+
         setTimeout(closeSaveModal, 1000);
     } catch (error) {
         saveStatus.textContent = `保存失敗: ${error.message}`;
@@ -2626,6 +2664,138 @@ function stopVoiceRecognition() {
 // and no longer try to manipulate the audio session from JS (previous
 // attempts with AudioContext/silent loops/oscillator bursts caused
 // regressions such as complete loss of speaker output).
+
+// ============================================================
+// Inbox (quick capture workflow)
+// ============================================================
+
+function updateInboxBadge() {
+    const count = inboxCache.length;
+    if (count > 0) {
+        inboxBadge.textContent = count > 99 ? "99+" : String(count);
+        inboxBadge.style.display = "inline-block";
+    } else {
+        inboxBadge.style.display = "none";
+    }
+}
+
+function renderInbox() {
+    const items = [...inboxCache].sort((a, b) => {
+        const ta = new Date(a.createdAt || 0).getTime();
+        const tb = new Date(b.createdAt || 0).getTime();
+        return tb - ta;
+    });
+
+    inboxCount.textContent = `${items.length} 件`;
+
+    if (items.length === 0) {
+        inboxListEl.innerHTML = "";
+        inboxEmpty.style.display = "block";
+        return;
+    }
+
+    inboxEmpty.style.display = "none";
+    inboxListEl.innerHTML = "";
+    items.forEach((item) => {
+        const el = document.createElement("div");
+        el.className = "inbox-item";
+        const sourceLabel = {
+            voice: "🎤 音声",
+            clipboard: "📋 クリップボード",
+            screenshot: "📸 スクショ",
+            manual: "✍️ 手動",
+            shortcut: "⚡ ショートカット",
+        }[item.source] || item.source || "?";
+
+        el.innerHTML = `
+            <div class="inbox-item-meta">
+                <span class="inbox-source-chip">${escapeHtml(sourceLabel)}</span>
+                <span>${escapeHtml(formatRelativeTime(item.createdAt))}</span>
+                ${item.srcLang ? `<span>${escapeHtml(item.srcLang)}</span>` : ""}
+            </div>
+            <div class="inbox-item-text"></div>
+            ${item.note ? `<div class="inbox-item-note"></div>` : ""}
+            <div class="inbox-item-actions">
+                <button class="inbox-process-btn" data-id="${escapeHtml(item.id)}">翻訳して保存</button>
+                <button class="inbox-delete-btn" data-id="${escapeHtml(item.id)}">削除</button>
+            </div>
+        `;
+
+        el.querySelector(".inbox-item-text").textContent = item.text || "";
+        if (item.note) el.querySelector(".inbox-item-note").textContent = item.note;
+
+        el.querySelector(".inbox-process-btn").addEventListener("click", () => processInboxItem(item));
+        el.querySelector(".inbox-delete-btn").addEventListener("click", () => deleteInboxItem(item));
+
+        inboxListEl.appendChild(el);
+    });
+}
+
+function formatRelativeTime(isoStr) {
+    if (!isoStr) return "?";
+    const t = new Date(isoStr).getTime();
+    if (isNaN(t)) return "?";
+    const diffMs = Date.now() - t;
+    const diffSec = Math.floor(diffMs / 1000);
+    if (diffSec < 60) return "たった今";
+    const diffMin = Math.floor(diffSec / 60);
+    if (diffMin < 60) return `${diffMin}分前`;
+    const diffHr = Math.floor(diffMin / 60);
+    if (diffHr < 24) return `${diffHr}時間前`;
+    const diffDay = Math.floor(diffHr / 24);
+    if (diffDay < 30) return `${diffDay}日前`;
+    return new Date(isoStr).toLocaleDateString("ja-JP");
+}
+
+async function deleteInboxItem(item) {
+    if (!confirm(`このキャプチャを削除しますか？\n\n"${item.text}"`)) return;
+    try {
+        await gasPost("deleteInboxItem", { id: item.id });
+        inboxCache = inboxCache.filter((i) => i.id !== item.id);
+        renderInbox();
+        updateInboxBadge();
+        showToast("削除しました");
+    } catch (error) {
+        showToast(`削除失敗: ${error.message}`);
+    }
+}
+
+async function processInboxItem(item) {
+    const apiKey = getApiKey();
+    if (!apiKey) {
+        showToast("Gemini APIキーが必要です");
+        openSettings();
+        return;
+    }
+
+    // Determine source and target languages
+    const srcLang = item.srcLang || detectSourceLang(item.text);
+    const tgtLang = srcLang === "ja" ? "en" : "ja";
+    const tgtName = LANG_NAMES[tgtLang] || tgtLang;
+    const srcName = LANG_NAMES[srcLang] || srcLang;
+
+    showToast("翻訳中...");
+
+    try {
+        const prompt = `Translate the following text from ${srcName} to ${tgtName}. Output ONLY the translated text, nothing else.\n\n${item.text}`;
+        const translation = await callGemini(apiKey, prompt);
+
+        // Pre-populate state so openSaveModal picks it up naturally
+        lastSourceText = item.text;
+        lastDetectedSrcLang = srcLang;
+        currentTargetLang = tgtLang;
+        translationCache = { normal: translation, casual: "", formal: "", advanced: "", notes: "" };
+        activeStyle = "normal";
+
+        // Remember the inbox item so saving auto-removes it
+        pendingInboxItem = item;
+
+        openSaveModal();
+    } catch (error) {
+        pendingInboxItem = null;
+        showToast(`翻訳失敗: ${error.message}`);
+    }
+}
 
 // ---- Start ----
 init();
