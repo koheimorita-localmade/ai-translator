@@ -39,6 +39,7 @@ const STORAGE_KEY_FAVORITES = "favorite_languages";
 const STORAGE_KEY_GAS_URL = "gas_endpoint_url";
 const STORAGE_KEY_AUTOPLAY_DELAY = "autoplay_delay";
 const STORAGE_KEY_VOICE_FEEDBACK = "voice_feedback_enabled";
+const STORAGE_KEY_SEEN_INBOX = "seen_inbox_ids";
 const DEFAULT_FAVORITES = ["en", "zh", "ko", "tl", "id"];
 const DEFAULT_AUTOPLAY_DELAY = 10;
 
@@ -1371,14 +1372,7 @@ async function confirmSaveCard() {
         }
 
         // If this save came from an inbox item, delete the inbox entry
-        if (pendingInboxItem) {
-            const inboxId = pendingInboxItem.id;
-            gasPost("deleteInboxItem", { id: inboxId }).catch(() => {});
-            inboxCache = inboxCache.filter((i) => i.id !== inboxId);
-            pendingInboxItem = null;
-            updateInboxBadge();
-            if (inboxView.style.display !== "none") renderInbox();
-        }
+        cleanupInboxAfterSave();
 
         setTimeout(closeSaveModal, 1000);
     } catch (error) {
@@ -1631,6 +1625,11 @@ async function confirmExtractSave() {
     saveStatus.textContent = `${savedCount}件保存、${skippedCount}件スキップ`;
     saveStatus.className = "key-status success";
     saveExtractConfirmBtn.disabled = false;
+
+    // If extraction came from an inbox item, delete the original now that
+    // its phrases have been promoted to cards.
+    if (savedCount > 0) cleanupInboxAfterSave();
+
     setTimeout(closeSaveModal, 1500);
 }
 
@@ -2669,10 +2668,45 @@ function stopVoiceRecognition() {
 // Inbox (quick capture workflow)
 // ============================================================
 
+// Seen state (client-side only, stored in localStorage).
+// An item is "seen" when the user has acted on it
+// (opened 翻訳して保存, or explicitly dismissed NEW), even if they cancelled.
+function getSeenInboxIds() {
+    try {
+        return new Set(JSON.parse(localStorage.getItem(STORAGE_KEY_SEEN_INBOX) || "[]"));
+    } catch {
+        return new Set();
+    }
+}
+
+function saveSeenInboxIds(set) {
+    localStorage.setItem(STORAGE_KEY_SEEN_INBOX, JSON.stringify([...set]));
+}
+
+function markInboxSeen(id) {
+    const seen = getSeenInboxIds();
+    if (seen.has(id)) return;
+    seen.add(id);
+    saveSeenInboxIds(seen);
+}
+
+// Prune seen IDs that no longer exist in the inbox (item was processed/deleted).
+function pruneSeenInboxIds() {
+    const current = new Set(inboxCache.map((i) => i.id));
+    const seen = getSeenInboxIds();
+    const filtered = new Set([...seen].filter((id) => current.has(id)));
+    if (filtered.size !== seen.size) saveSeenInboxIds(filtered);
+}
+
+function countUnseenInbox() {
+    const seen = getSeenInboxIds();
+    return inboxCache.filter((i) => !seen.has(i.id)).length;
+}
+
 function updateInboxBadge() {
-    const count = inboxCache.length;
-    if (count > 0) {
-        inboxBadge.textContent = count > 99 ? "99+" : String(count);
+    const unseen = countUnseenInbox();
+    if (unseen > 0) {
+        inboxBadge.textContent = unseen > 99 ? "99+" : String(unseen);
         inboxBadge.style.display = "inline-block";
     } else {
         inboxBadge.style.display = "none";
@@ -2680,13 +2714,18 @@ function updateInboxBadge() {
 }
 
 function renderInbox() {
+    pruneSeenInboxIds();
+    const seen = getSeenInboxIds();
     const items = [...inboxCache].sort((a, b) => {
         const ta = new Date(a.createdAt || 0).getTime();
         const tb = new Date(b.createdAt || 0).getTime();
         return tb - ta;
     });
 
-    inboxCount.textContent = `${items.length} 件`;
+    const unseen = items.filter((i) => !seen.has(i.id)).length;
+    inboxCount.textContent = unseen > 0 && unseen < items.length
+        ? `${items.length} 件（新着 ${unseen}）`
+        : `${items.length} 件`;
 
     if (items.length === 0) {
         inboxListEl.innerHTML = "";
@@ -2697,8 +2736,9 @@ function renderInbox() {
     inboxEmpty.style.display = "none";
     inboxListEl.innerHTML = "";
     items.forEach((item) => {
+        const isNew = !seen.has(item.id);
         const el = document.createElement("div");
-        el.className = "inbox-item";
+        el.className = "inbox-item" + (isNew ? " inbox-item-new" : "");
         const sourceLabel = {
             voice: "🎤 音声",
             clipboard: "📋 クリップボード",
@@ -2709,6 +2749,7 @@ function renderInbox() {
 
         el.innerHTML = `
             <div class="inbox-item-meta">
+                ${isNew ? `<span class="inbox-new-dot">NEW</span>` : ""}
                 <span class="inbox-source-chip">${escapeHtml(sourceLabel)}</span>
                 <span>${escapeHtml(formatRelativeTime(item.createdAt))}</span>
                 ${item.srcLang ? `<span>${escapeHtml(item.srcLang)}</span>` : ""}
@@ -2717,6 +2758,7 @@ function renderInbox() {
             ${item.note ? `<div class="inbox-item-note"></div>` : ""}
             <div class="inbox-item-actions">
                 <button class="inbox-process-btn" data-id="${escapeHtml(item.id)}">翻訳して保存</button>
+                ${isNew ? `<button class="inbox-markread-btn" data-id="${escapeHtml(item.id)}">既読</button>` : ""}
                 <button class="inbox-delete-btn" data-id="${escapeHtml(item.id)}">削除</button>
             </div>
         `;
@@ -2726,6 +2768,14 @@ function renderInbox() {
 
         el.querySelector(".inbox-process-btn").addEventListener("click", () => processInboxItem(item));
         el.querySelector(".inbox-delete-btn").addEventListener("click", () => deleteInboxItem(item));
+        const markReadBtn = el.querySelector(".inbox-markread-btn");
+        if (markReadBtn) {
+            markReadBtn.addEventListener("click", () => {
+                markInboxSeen(item.id);
+                renderInbox();
+                updateInboxBadge();
+            });
+        }
 
         inboxListEl.appendChild(el);
     });
@@ -2768,6 +2818,12 @@ async function processInboxItem(item) {
         return;
     }
 
+    // User has taken explicit action — mark as seen regardless of
+    // whether they ultimately save or cancel.
+    markInboxSeen(item.id);
+    updateInboxBadge();
+    if (inboxView.style.display !== "none") renderInbox();
+
     // Determine source and target languages
     const srcLang = item.srcLang || detectSourceLang(item.text);
     const tgtLang = srcLang === "ja" ? "en" : "ja";
@@ -2795,6 +2851,17 @@ async function processInboxItem(item) {
         pendingInboxItem = null;
         showToast(`翻訳失敗: ${error.message}`);
     }
+}
+
+// Called from both single-save and extract-save flows after successful DB writes
+function cleanupInboxAfterSave() {
+    if (!pendingInboxItem) return;
+    const inboxId = pendingInboxItem.id;
+    gasPost("deleteInboxItem", { id: inboxId }).catch(() => {});
+    inboxCache = inboxCache.filter((i) => i.id !== inboxId);
+    pendingInboxItem = null;
+    updateInboxBadge();
+    if (inboxView.style.display !== "none") renderInbox();
 }
 
 // ---- Start ----

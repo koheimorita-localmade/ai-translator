@@ -805,6 +805,41 @@ textarea::placeholder {
     color: var(--danger);
 }
 
+/* NEW indicator for unseen inbox items */
+.inbox-item-new {
+    border-left: 4px solid var(--danger);
+    padding-left: 10px;
+}
+
+.inbox-new-dot {
+    display: inline-block;
+    padding: 2px 7px;
+    background: var(--danger);
+    color: white;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    line-height: 1;
+}
+
+.inbox-markread-btn {
+    padding: 8px 12px;
+    background: transparent;
+    color: var(--text-secondary);
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all var(--transition);
+}
+
+.inbox-markread-btn:hover {
+    border-color: var(--primary);
+    color: var(--primary);
+}
+
 .mode-view {
     animation: fadeIn 0.2s ease;
 }
