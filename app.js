@@ -3169,12 +3169,6 @@ function handleCaptureFromURL() {
         showToast("Gemini APIキー未設定のため翻訳はスキップ");
     }
 
-    if (getGasUrl()) {
-        captureToInbox(text, { srcLang, source }).catch((err) => {
-            console.warn("Inbox auto-save failed:", err);
-        });
-    }
-
     // Strip the capture params from the URL so a reload doesn't re-trigger
     try {
         const url = new URL(window.location.href);
@@ -3185,6 +3179,10 @@ function handleCaptureFromURL() {
     } catch {}
 }
 
+// captureToInbox is retained for use by iOS Shortcuts or other
+// fire-and-forget channels that POST to quickCapture directly.
+// The ?capture= URL flow no longer auto-saves to inbox because
+// the user already sees the translation result and can save manually.
 async function captureToInbox(text, opts = {}) {
     const payload = {
         text,
