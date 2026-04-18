@@ -540,6 +540,9 @@ async function fetchSingleStyle(style, text, tgtLang) {
         const tgtName = LANG_NAMES[tgtLang] || tgtLang;
         const srcLang = sourceLang.value;
         const srcName = LANG_NAMES[srcLang] || srcLang;
+        const resolvedTgtName = tgtLang === "auto"
+            ? (srcLang === "ja" ? "English" : srcLang === "en" ? "日本語" : "English")
+            : tgtName;
 
         const styleDesc = {
             normal: "standard/literal translation",
@@ -549,8 +552,8 @@ async function fetchSingleStyle(style, text, tgtLang) {
         }[style];
 
         const langContext = srcLang === "auto"
-            ? `Translate the following text to ${tgtName}`
-            : `Translate the following text from ${srcName} to ${tgtName}`;
+            ? `Translate the following text to ${resolvedTgtName}`
+            : `Translate the following text from ${srcName} to ${resolvedTgtName}`;
 
         const prompt = `${langContext} using a ${styleDesc}. Output ONLY the translated text, nothing else.\n\n${text}`;
 
@@ -601,9 +604,12 @@ async function handleTranslate() {
 
     const srcLang = sourceLang.value;
     const srcName = LANG_NAMES[srcLang] || srcLang;
+    const resolvedTgtName = tgtLang === "auto"
+        ? (srcLang === "ja" ? "English" : srcLang === "en" ? "日本語" : "English")
+        : tgtName;
     const langContext = srcLang === "auto"
-        ? `the following text to ${tgtName}`
-        : `the following text from ${srcName} to ${tgtName}`;
+        ? `the following text to ${resolvedTgtName}`
+        : `the following text from ${srcName} to ${resolvedTgtName}`;
 
     // Mark all non-normal tabs as loading
     ["casual", "formal", "advanced"].forEach((style) => {
@@ -3626,64 +3632,54 @@ async function judgeWithGemini(transcript) {
     const apiKey = getApiKey();
     if (!apiKey) { gameJudging = false; return; }
 
+    // Step 1: local string match — reliable, no API needed
+    const tLower = transcript.toLowerCase();
+    const localMatches = gameState.fallingWords.filter((w) =>
+        tLower.includes(w.text.toLowerCase())
+    );
+
+    if (localMatches.length === 0) {
+        setTranscript(transcript);
+        gameJudging = false;
+        return;
+    }
+
     setTranscript("判定中...", true);
 
-    const wordList = gameState.fallingWords.map((w) => ({ id: w.id, text: w.text }));
-    const prompt = `You judge an English speaking game. The player sees words/phrases falling on screen and must say a complete English sentence that uses at least one of them.
+    // Step 2: Gemini scores sentence quality only (matches already known)
+    const prompt = `Rate the quality of this English sentence on a scale of 1 to 3.
+1 = grammatically complete but very simple (e.g. "This is a cat.")
+2 = natural, varied vocabulary, good grammar
+3 = complex, creative, or impressive sentence
 
-Target words/phrases (use the exact text in your response):
-${wordList.map((w) => `- "${w.text}"`).join("\n")}
+Sentence: "${transcript}"
 
-Player said: "${transcript}"
+Reply with JSON only: {"score":1}`;
 
-A sentence is complete if it has a subject and a verb (even short sentences like "I love it." count).
-
-Return JSON only, no markdown fences:
-{"matches":["exact target text used"],"score":0}
-
-score: 0=no complete sentence / no target word used, 1=basic complete sentence, 2=natural fluent sentence, 3=complex or creative sentence
-matches: list only the exact target texts from the list above that appear in a complete sentence`;
-
+    let score = 1;
     try {
         const res = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 contents: [{ parts: [{ text: prompt }] }],
-                generationConfig: {
-                    temperature: 0.1,
-                    maxOutputTokens: 200,
-                    responseMimeType: "application/json",
-                },
+                generationConfig: { temperature: 0.1, maxOutputTokens: 50 },
             }),
         });
-
-        if (!res.ok) { gameJudging = false; setTranscript(transcript); return; }
-
-        const data = await res.json();
-        const raw = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
-        const jsonStr = raw.match(/\{[\s\S]*\}/)?.[0] || raw;
-        const result = JSON.parse(jsonStr);
-
-        if (result.score > 0 && result.matches?.length > 0) {
-            let anyHit = false;
-            result.matches.forEach((matchText) => {
-                const lower = matchText.toLowerCase();
-                const word = gameState?.fallingWords.find(
-                    (w) => w.text.toLowerCase() === lower ||
-                           lower.includes(w.text.toLowerCase()) ||
-                           w.text.toLowerCase().includes(lower)
-                );
-                if (word) { hitWord(word.id, result.score); anyHit = true; }
-            });
-            setTranscript(anyHit ? `${"★".repeat(result.score)} ${transcript}` : transcript);
-        } else {
-            setTranscript(transcript);
+        if (res.ok) {
+            const data = await res.json();
+            const raw = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
+            const m = raw.match(/"score"\s*:\s*([123])/);
+            if (m) score = Number(m[1]);
         }
-    } catch (e) {
-        setTranscript(transcript);
-    }
+    } catch (_) {}
 
+    localMatches.forEach((w) => {
+        if (gameState?.fallingWords.find((fw) => fw.id === w.id)) {
+            hitWord(w.id, score);
+        }
+    });
+    setTranscript(`${"★".repeat(score)} ${transcript}`);
     gameJudging = false;
 }
 
