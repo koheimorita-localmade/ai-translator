@@ -486,8 +486,8 @@ function updateTranslateButton() {
 
 // ---- Auto Target Language ----
 function isJapaneseText(text) {
-    const japaneseChars = text.match(/[\u3040-\u309F\u30A0-\u30FF]/g);
-    return japaneseChars && japaneseChars.length >= 2;
+    const japaneseChars = text.match(/[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/g);
+    return japaneseChars && japaneseChars.length >= 1;
 }
 
 function resolveTargetLanguage(text) {
@@ -3293,6 +3293,7 @@ let gameSettings = { ...GAME_DEFAULTS };
 let gameState = null;
 let gameSpeechRecognition = null;
 let gameJudging = false;
+let gameJudgeTimer = null;
 
 function initGame() {
     const saved = localStorage.getItem(GAME_STORAGE_KEY);
@@ -3521,6 +3522,7 @@ function updateGameHUD() {
 function endGame() {
     if (!gameState?.running) return;
     gameState.running = false;
+    clearTimeout(gameJudgeTimer);
     clearInterval(gameState.timerInterval);
     cancelAnimationFrame(gameState.animFrameId);
     stopGameSpeech();
@@ -3579,12 +3581,24 @@ function startGameSpeech() {
             else interim += t;
         }
         setTranscript(final || interim || "...", !final);
-        if (final && gameState?.running && !gameJudging) {
+
+        const tryJudge = (text) => {
+            if (!gameState?.running || gameJudging) return;
             const now = Date.now();
             if (now - gameState.lastGeminiCallTime > GEMINI_COOLDOWN_MS) {
                 gameState.lastGeminiCallTime = now;
-                judgeWithGemini(final.trim());
+                judgeWithGemini(text);
             }
+        };
+
+        if (final) {
+            clearTimeout(gameJudgeTimer);
+            tryJudge(final.trim());
+        } else if (interim) {
+            // iOS fallback: isFinal may never fire — debounce on interim
+            clearTimeout(gameJudgeTimer);
+            const captured = interim.trim();
+            gameJudgeTimer = setTimeout(() => tryJudge(captured), 700);
         }
     };
 
