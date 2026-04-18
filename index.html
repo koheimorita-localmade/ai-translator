@@ -200,6 +200,89 @@
         <!-- GAME VIEW                      -->
         <!-- ============================== -->
         <div id="game-view" class="mode-view" style="display:none;">
+
+            <!-- Setup Screen -->
+            <div id="game-setup" class="game-screen game-setup-screen">
+                <h2 class="game-screen-title">ゲーム設定</h2>
+
+                <div class="game-setting-group">
+                    <div class="game-setting-label">モード</div>
+                    <div class="game-opts">
+                        <button class="game-opt active" data-setting="gameMode" data-value="en-en">英 → 英作文</button>
+                    </div>
+                </div>
+
+                <div class="game-setting-group">
+                    <div class="game-setting-label">制限時間</div>
+                    <div class="game-opts">
+                        <button class="game-opt" data-setting="gameDuration" data-value="30">30秒</button>
+                        <button class="game-opt" data-setting="gameDuration" data-value="60">1分</button>
+                        <button class="game-opt" data-setting="gameDuration" data-value="120">2分</button>
+                        <button class="game-opt" data-setting="gameDuration" data-value="180">3分</button>
+                    </div>
+                </div>
+
+                <div class="game-setting-group">
+                    <div class="game-setting-label">落下スピード</div>
+                    <div class="game-opts">
+                        <button class="game-opt" data-setting="gameFallSpeed" data-value="slow">ゆっくり</button>
+                        <button class="game-opt" data-setting="gameFallSpeed" data-value="normal">ふつう</button>
+                        <button class="game-opt" data-setting="gameFallSpeed" data-value="fast">はやい</button>
+                    </div>
+                </div>
+
+                <div class="game-setting-group">
+                    <div class="game-setting-label">ミス時</div>
+                    <div class="game-opts">
+                        <button class="game-opt" data-setting="gameMissPenalty" data-value="none">減点なし</button>
+                        <button class="game-opt" data-setting="gameMissPenalty" data-value="penalty">-5点</button>
+                    </div>
+                </div>
+
+                <div class="game-setting-group">
+                    <div class="game-setting-label">カード絞り込み</div>
+                    <div class="game-opts">
+                        <button class="game-opt" data-setting="gameCardFilter" data-value="all">すべて</button>
+                        <button class="game-opt" data-setting="gameCardFilter" data-value="due">復習期限</button>
+                        <button class="game-opt" data-setting="gameCardFilter" data-value="new">未学習</button>
+                    </div>
+                </div>
+
+                <div id="game-card-count" class="game-card-count"></div>
+                <button id="game-start-btn" class="game-start-btn">ゲーム開始</button>
+            </div>
+
+            <!-- Play Screen -->
+            <div id="game-play" class="game-screen" style="display:none;">
+                <div class="game-hud">
+                    <div id="game-timer" class="game-timer">1:00</div>
+                    <div id="game-score-display" class="game-score-display">0点</div>
+                </div>
+                <div id="game-field" class="game-field">
+                    <div class="game-baseline"></div>
+                </div>
+                <div class="game-voice-area">
+                    <div id="game-mic-indicator" class="game-mic-indicator">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 1a4 4 0 0 1 4 4v6a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4zm0 2a2 2 0 0 0-2 2v6a2 2 0 0 0 4 0V5a2 2 0 0 0-2-2zm-1 15.93A8 8 0 0 1 4.07 12H6.1A6 6 0 0 0 18 12h2.02A8 8 0 0 1 13 18.93V22h-2v-4.07z"/>
+                        </svg>
+                    </div>
+                    <div id="game-transcript" class="game-transcript">話しかけてください...</div>
+                </div>
+                <button id="game-abort-btn" class="game-abort-btn">終了</button>
+            </div>
+
+            <!-- Result Screen -->
+            <div id="game-result" class="game-screen" style="display:none;">
+                <h2 class="game-screen-title">結果</h2>
+                <div id="game-final-score" class="game-final-score"></div>
+                <div id="game-stats" class="game-stats"></div>
+                <div class="game-result-btns">
+                    <button id="game-retry-btn" class="btn-primary">もう一度</button>
+                    <button id="game-back-btn" class="btn-secondary">設定に戻る</button>
+                </div>
+            </div>
+
         </div>
 
         <!-- ============================== -->

@@ -260,6 +260,7 @@ function init() {
     if (getGasUrl()) fetchAllFromDb().catch(() => {});
     // Handle ?capture=... URL parameter for quick translate + inbox from Alfred etc.
     handleCaptureFromURL();
+    initGame();
 }
 
 function bindEvents() {
@@ -411,6 +412,10 @@ function switchMode(mode) {
     studyView.style.display = mode === "study" ? "block" : "none";
     cardsView.style.display = mode === "cards" ? "block" : "none";
     inboxView.style.display = mode === "inbox" ? "block" : "none";
+
+    if (mode === "game") {
+        renderGameSetup();
+    }
 
     if (mode === "cards") {
         renderCards();
@@ -3257,6 +3262,398 @@ async function captureToInbox(text, opts = {}) {
         if (inboxView.style.display !== "none") renderInbox();
         showToast("受信箱に保存しました");
     }
+}
+
+// ============================================================
+// GAME MODULE
+// ============================================================
+
+const GAME_STORAGE_KEY = "gameSettings";
+const GAME_DEFAULTS = {
+    gameMode: "en-en",
+    gameDuration: 60,
+    gameFallSpeed: "normal",
+    gameMissPenalty: "none",
+    gameCardFilter: "all",
+};
+const FALL_DURATIONS = { slow: 10000, normal: 6000, fast: 3500 };
+const SPAWN_INTERVAL_BASE = 3500;
+const MAX_WORDS_ON_SCREEN = 5;
+const MISS_PENALTY_POINTS = 5;
+const STAR_POINTS = [0, 10, 25, 50];
+const GEMINI_COOLDOWN_MS = 1800;
+
+let gameSettings = { ...GAME_DEFAULTS };
+let gameState = null;
+let gameSpeechRecognition = null;
+let gameJudging = false;
+
+function initGame() {
+    const saved = localStorage.getItem(GAME_STORAGE_KEY);
+    if (saved) {
+        try { gameSettings = { ...GAME_DEFAULTS, ...JSON.parse(saved) }; } catch (_) {}
+    }
+
+    document.querySelectorAll(".game-opt").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            const raw = btn.dataset.value;
+            gameSettings[btn.dataset.setting] = isNaN(raw) ? raw : Number(raw);
+            saveGameSettings();
+            renderGameSetup();
+        });
+    });
+
+    document.getElementById("game-start-btn").addEventListener("click", startGame);
+    document.getElementById("game-abort-btn").addEventListener("click", endGame);
+    document.getElementById("game-retry-btn").addEventListener("click", () => startGame());
+    document.getElementById("game-back-btn").addEventListener("click", () => showGameScreen("setup"));
+
+    renderGameSetup();
+}
+
+function saveGameSettings() {
+    localStorage.setItem(GAME_STORAGE_KEY, JSON.stringify(gameSettings));
+}
+
+function renderGameSetup() {
+    document.querySelectorAll(".game-opt").forEach((btn) => {
+        btn.classList.toggle("active", String(gameSettings[btn.dataset.setting]) === btn.dataset.value);
+    });
+    const countEl = document.getElementById("game-card-count");
+    if (countEl) countEl.textContent = `対象カード: ${getGameCards().length}枚`;
+}
+
+// ---- Card filtering ----
+function getGameCards() {
+    let cards = cardsCache.filter((c) => c.langA === "en" || c.langB === "en");
+    if (gameSettings.gameCardFilter === "due") {
+        cards = cards.filter((c) => {
+            const s = scoresCache.find((sc) => sc.pairId === c.id);
+            return !s || !s.nextReview || new Date(s.nextReview).getTime() <= Date.now();
+        });
+    } else if (gameSettings.gameCardFilter === "new") {
+        cards = cards.filter((c) => !scoresCache.find((sc) => sc.pairId === c.id));
+    }
+    return cards;
+}
+
+function getEnglishText(card) {
+    return card.langA === "en" ? card.textA : card.textB;
+}
+
+// ---- Start ----
+async function startGame() {
+    const apiKey = getApiKey();
+    if (!apiKey) { alert("Gemini APIキーが設定されていません。"); return; }
+    if (!getGasUrl()) { alert("GASのURLが設定されていません。"); return; }
+
+    const cards = getGameCards();
+    if (cards.length === 0) {
+        alert("対象カードがありません。カードを追加するか絞り込み条件を変えてください。");
+        return;
+    }
+
+    const wordPool = [...cards]
+        .sort(() => Math.random() - 0.5)
+        .map((c) => getEnglishText(c))
+        .filter(Boolean);
+
+    gameState = {
+        wordPool,
+        wordIndex: 0,
+        fallingWords: [],
+        score: 0,
+        hits: 0,
+        misses: 0,
+        starCounts: [0, 0, 0],
+        timeLeft: gameSettings.gameDuration,
+        running: true,
+        lastSpawnTime: 0,
+        lastGeminiCallTime: 0,
+        lastFrameTime: null,
+        animFrameId: null,
+        timerInterval: null,
+    };
+
+    showGameScreen("play");
+    await new Promise((r) => setTimeout(r, 100));
+
+    updateGameHUD();
+    gameState.timerInterval = setInterval(() => {
+        if (!gameState?.running) return;
+        gameState.timeLeft--;
+        updateGameHUD();
+        if (gameState.timeLeft <= 0) endGame();
+    }, 1000);
+
+    spawnWord();
+    gameState.animFrameId = requestAnimationFrame(gameLoop);
+    startGameSpeech();
+}
+
+// ---- Game loop ----
+function gameLoop(timestamp) {
+    if (!gameState?.running) return;
+
+    const dt = gameState.lastFrameTime ? timestamp - gameState.lastFrameTime : 16;
+    gameState.lastFrameTime = timestamp;
+
+    const field = document.getElementById("game-field");
+    if (!field) return;
+
+    const fieldHeight = field.clientHeight;
+    const pxPerMs = fieldHeight / (FALL_DURATIONS[gameSettings.gameFallSpeed] || 6000);
+
+    const missed = [];
+    gameState.fallingWords.forEach((w) => {
+        w.y += pxPerMs * dt;
+        w.el.style.top = w.y + "px";
+        if (w.y > fieldHeight + 10) missed.push(w);
+    });
+    missed.forEach((w) => missWord(w));
+
+    const now = Date.now();
+    const spawnInterval = Math.max(1500, SPAWN_INTERVAL_BASE - gameState.hits * 40);
+    if (now - gameState.lastSpawnTime > spawnInterval && gameState.fallingWords.length < MAX_WORDS_ON_SCREEN) {
+        spawnWord();
+    }
+
+    gameState.animFrameId = requestAnimationFrame(gameLoop);
+}
+
+// ---- Spawn ----
+function spawnWord() {
+    if (!gameState) return;
+    const text = gameState.wordPool[gameState.wordIndex % gameState.wordPool.length];
+    gameState.wordIndex++;
+
+    const field = document.getElementById("game-field");
+    if (!field) return;
+
+    const id = `w-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const el = document.createElement("div");
+    el.className = "falling-word";
+    el.textContent = text;
+    el.dataset.wid = id;
+    field.appendChild(el);
+
+    const elWidth = el.offsetWidth || 100;
+    const x = Math.max(8, Math.random() * (field.clientWidth - elWidth - 8));
+    el.style.left = x + "px";
+    el.style.top = "-50px";
+
+    gameState.fallingWords.push({ id, text, el, y: -50 });
+    gameState.lastSpawnTime = Date.now();
+}
+
+// ---- Miss ----
+function missWord(word) {
+    gameState.fallingWords = gameState.fallingWords.filter((w) => w.id !== word.id);
+    if (word.el.parentNode) word.el.parentNode.removeChild(word.el);
+    gameState.misses++;
+
+    if (gameSettings.gameMissPenalty === "penalty") {
+        gameState.score = Math.max(0, gameState.score - MISS_PENALTY_POINTS);
+        updateGameHUD();
+    }
+
+    const field = document.getElementById("game-field");
+    if (field) {
+        field.classList.add("miss-flash");
+        setTimeout(() => field.classList.remove("miss-flash"), 350);
+    }
+}
+
+// ---- Hit ----
+function hitWord(wordId, stars) {
+    const word = gameState?.fallingWords.find((w) => w.id === wordId);
+    if (!word) return;
+
+    gameState.fallingWords = gameState.fallingWords.filter((w) => w.id !== wordId);
+    word.el.classList.add("word-hit", `star-${stars}`);
+    setTimeout(() => { if (word.el.parentNode) word.el.parentNode.removeChild(word.el); }, 600);
+
+    gameState.score += STAR_POINTS[stars] || 0;
+    gameState.hits++;
+    if (stars >= 1 && stars <= 3) gameState.starCounts[stars - 1]++;
+
+    showFloatingScore(word, stars);
+    updateGameHUD();
+}
+
+function showFloatingScore(word, stars) {
+    const field = document.getElementById("game-field");
+    if (!field) return;
+    const pts = STAR_POINTS[stars] || 0;
+    const el = document.createElement("div");
+    el.className = "floating-score";
+    el.textContent = `${"★".repeat(stars)} +${pts}`;
+    el.style.left = word.el.style.left;
+    el.style.top = Math.max(4, word.y - 10) + "px";
+    field.appendChild(el);
+    setTimeout(() => { if (el.parentNode) el.parentNode.removeChild(el); }, 1000);
+}
+
+// ---- HUD ----
+function updateGameHUD() {
+    if (!gameState) return;
+    const timerEl = document.getElementById("game-timer");
+    const scoreEl = document.getElementById("game-score-display");
+    if (timerEl) {
+        const m = Math.floor(gameState.timeLeft / 60);
+        const s = gameState.timeLeft % 60;
+        timerEl.textContent = m > 0 ? `${m}:${String(s).padStart(2, "0")}` : `${s}秒`;
+        timerEl.classList.toggle("urgent", gameState.timeLeft <= 10);
+    }
+    if (scoreEl) scoreEl.textContent = `${gameState.score}点`;
+}
+
+// ---- End ----
+function endGame() {
+    if (!gameState?.running) return;
+    gameState.running = false;
+    clearInterval(gameState.timerInterval);
+    cancelAnimationFrame(gameState.animFrameId);
+    stopGameSpeech();
+
+    const field = document.getElementById("game-field");
+    if (field) {
+        gameState.fallingWords.forEach((w) => { if (w.el.parentNode) w.el.parentNode.removeChild(w.el); });
+        gameState.fallingWords = [];
+    }
+
+    showGameScreen("result");
+
+    const scoreEl = document.getElementById("game-final-score");
+    const statsEl = document.getElementById("game-stats");
+    const [s1, s2, s3] = gameState.starCounts;
+    if (scoreEl) scoreEl.textContent = `${gameState.score}点`;
+    if (statsEl) {
+        statsEl.innerHTML = `
+            <div class="stat-row"><span>ヒット数</span><span>${gameState.hits}回</span></div>
+            <div class="stat-row"><span>ミス数</span><span>${gameState.misses}回</span></div>
+            <div class="stat-row"><span>★★★ (+50点)</span><span>${s3}回</span></div>
+            <div class="stat-row"><span>★★ (+25点)</span><span>${s2}回</span></div>
+            <div class="stat-row"><span>★ (+10点)</span><span>${s1}回</span></div>
+        `;
+    }
+}
+
+// ---- Screen management ----
+function showGameScreen(screen) {
+    ["setup", "play", "result"].forEach((s) => {
+        const el = document.getElementById(`game-${s}`);
+        if (el) el.style.display = s === screen ? "flex" : "none";
+    });
+}
+
+// ---- Speech recognition ----
+function startGameSpeech() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+        const t = document.getElementById("game-transcript");
+        if (t) t.textContent = "このブラウザは音声認識に対応していません";
+        return;
+    }
+
+    gameSpeechRecognition = new SR();
+    gameSpeechRecognition.lang = "en-US";
+    gameSpeechRecognition.continuous = true;
+    gameSpeechRecognition.interimResults = true;
+
+    gameSpeechRecognition.onresult = (event) => {
+        let interim = "";
+        let final = "";
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+            const t = event.results[i][0].transcript;
+            if (event.results[i].isFinal) final += t;
+            else interim += t;
+        }
+        const el = document.getElementById("game-transcript");
+        if (el) {
+            el.textContent = final || interim || "...";
+            el.style.opacity = final ? "1" : "0.6";
+        }
+        if (final && gameState?.running && !gameJudging) {
+            const now = Date.now();
+            if (now - gameState.lastGeminiCallTime > GEMINI_COOLDOWN_MS) {
+                gameState.lastGeminiCallTime = now;
+                judgeWithGemini(final.trim());
+            }
+        }
+    };
+
+    gameSpeechRecognition.onend = () => {
+        if (gameState?.running) {
+            try { gameSpeechRecognition.start(); } catch (_) {}
+        }
+    };
+
+    gameSpeechRecognition.onerror = (e) => {
+        if (e.error === "no-speech") return;
+        if (gameState?.running) {
+            setTimeout(() => { try { gameSpeechRecognition.start(); } catch (_) {} }, 500);
+        }
+    };
+
+    try {
+        gameSpeechRecognition.start();
+        updateMicIndicator(true);
+    } catch (_) {}
+}
+
+function stopGameSpeech() {
+    if (gameSpeechRecognition) {
+        try { gameSpeechRecognition.stop(); } catch (_) {}
+        gameSpeechRecognition = null;
+    }
+    updateMicIndicator(false);
+}
+
+function updateMicIndicator(active) {
+    const el = document.getElementById("game-mic-indicator");
+    if (el) el.classList.toggle("active", active);
+}
+
+// ---- Gemini judgment ----
+async function judgeWithGemini(transcript) {
+    if (!gameState || gameState.fallingWords.length === 0) return;
+    gameJudging = true;
+    const apiKey = getApiKey();
+    if (!apiKey) { gameJudging = false; return; }
+
+    const wordList = gameState.fallingWords.map((w) => w.text);
+    const prompt = `You are judging an English speaking game. The player must speak a complete English sentence using at least one target word/phrase.
+
+Target words/phrases on screen:
+${wordList.map((w) => `- "${w}"`).join("\n")}
+
+Player said: "${transcript}"
+
+Evaluate and respond with JSON only (no markdown):
+- "matches": array of target texts that appear in a grammatically complete sentence
+- "score": 0=no valid match or incomplete sentence, 1=simple complete sentence, 2=natural/varied sentence, 3=complex/creative sentence
+
+{"matches":[],"score":0,"reason":""}`;
+
+    try {
+        const raw = await callGemini(apiKey, prompt);
+        const jsonStr = raw.match(/\{[\s\S]*\}/)?.[0];
+        if (!jsonStr) { gameJudging = false; return; }
+        const result = JSON.parse(jsonStr);
+
+        if (result.matches?.length > 0 && result.score > 0) {
+            result.matches.forEach((matchText) => {
+                const word = gameState?.fallingWords.find(
+                    (w) => w.text.toLowerCase() === matchText.toLowerCase() ||
+                           matchText.toLowerCase().includes(w.text.toLowerCase())
+                );
+                if (word) hitWord(word.id, result.score);
+            });
+        }
+    } catch (_) {}
+
+    gameJudging = false;
 }
 
 // ---- Start ----
