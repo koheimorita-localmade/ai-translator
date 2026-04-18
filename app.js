@@ -94,6 +94,7 @@ const autoplayDelaySelect = document.getElementById("autoplay-delay");
 // Mode navigation
 const modeTabs = document.querySelectorAll(".mode-tab");
 const translateView = document.getElementById("translate-view");
+const gameView = document.getElementById("game-view");
 const studyView = document.getElementById("study-view");
 const cardsView = document.getElementById("cards-view");
 const inboxView = document.getElementById("inbox-view");
@@ -406,6 +407,7 @@ function bindEvents() {
 function switchMode(mode) {
     modeTabs.forEach((t) => t.classList.toggle("active", t.dataset.mode === mode));
     translateView.style.display = mode === "translate" ? "block" : "none";
+    gameView.style.display = mode === "game" ? "block" : "none";
     studyView.style.display = mode === "study" ? "block" : "none";
     cardsView.style.display = mode === "cards" ? "block" : "none";
     inboxView.style.display = mode === "inbox" ? "block" : "none";
