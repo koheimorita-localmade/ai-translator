@@ -3291,13 +3291,15 @@ const SPAWN_INTERVAL_BASE = 3500;
 const MAX_WORDS_ON_SCREEN = 5;
 const MISS_PENALTY_POINTS = 5;
 const STAR_POINTS = [0, 10, 25, 50];
-const GEMINI_COOLDOWN_MS = 1800;
+const GEMINI_QUEUE_INTERVAL_MS = 400;
 
 let gameSettings = { ...GAME_DEFAULTS };
 let gameState = null;
 let gameSpeechRecognition = null;
-let gameJudging = false;
 let gameJudgeTimer = null;
+let judgeQueue = [];
+let judgeQueueRunning = false;
+let judgeLastGeminiTime = 0;
 
 function initGame() {
     const saved = localStorage.getItem(GAME_STORAGE_KEY);
@@ -3396,7 +3398,6 @@ async function startGame() {
         timeLeft: gameSettings.gameDuration,
         running: true,
         lastSpawnTime: 0,
-        lastGeminiCallTime: 0,
         lastFrameTime: null,
         animFrameId: null,
         timerInterval: null,
@@ -3542,6 +3543,7 @@ function endGame() {
     if (!gameState?.running) return;
     gameState.running = false;
     clearTimeout(gameJudgeTimer);
+    judgeQueue.length = 0;
     clearInterval(gameState.timerInterval);
     cancelAnimationFrame(gameState.animFrameId);
     stopGameSpeech();
@@ -3610,34 +3612,29 @@ function startGameSpeech() {
     gameSpeechRecognition.lang = "en-US";
     gameSpeechRecognition.continuous = true;
     gameSpeechRecognition.interimResults = true;
+    gameSpeechRecognition.maxAlternatives = 3;
 
     gameSpeechRecognition.onresult = (event) => {
-        let interim = "";
-        let final = "";
+        let interimAlts = [];
+        let finalAlts = [];
         for (let i = event.resultIndex; i < event.results.length; i++) {
-            const t = event.results[i][0].transcript;
-            if (event.results[i].isFinal) final += t;
-            else interim += t;
+            const result = event.results[i];
+            const alts = Array.from({ length: result.length }, (_, j) => result[j].transcript.trim()).filter(Boolean);
+            if (result.isFinal) finalAlts.push(...alts);
+            else interimAlts.push(...alts);
         }
-        setTranscript(final || interim || "...", !final);
 
-        const tryJudge = (text) => {
-            if (!gameState?.running || gameJudging) return;
-            const now = Date.now();
-            if (now - gameState.lastGeminiCallTime > GEMINI_COOLDOWN_MS) {
-                gameState.lastGeminiCallTime = now;
-                judgeWithGemini(text);
-            }
-        };
+        const displayText = finalAlts[0] || interimAlts[0] || "...";
+        setTranscript(displayText, finalAlts.length === 0);
 
-        if (final) {
+        if (finalAlts.length > 0) {
             clearTimeout(gameJudgeTimer);
-            tryJudge(final.trim());
-        } else if (interim) {
+            finalAlts.forEach((t) => enqueueJudge(t));
+        } else if (interimAlts.length > 0) {
             // iOS fallback: isFinal may never fire — debounce on interim
             clearTimeout(gameJudgeTimer);
-            const captured = interim.trim();
-            gameJudgeTimer = setTimeout(() => tryJudge(captured), 700);
+            const captured = [...interimAlts];
+            gameJudgeTimer = setTimeout(() => captured.forEach((t) => enqueueJudge(t)), 700);
         }
     };
 
@@ -3673,7 +3670,54 @@ function updateMicIndicator(active) {
     if (el) el.classList.toggle("active", active);
 }
 
+// ---- Judge queue ----
+function enqueueJudge(transcript) {
+    if (!gameState?.running) return;
+    const norm = normalizeTranscript(transcript);
+    if (!norm) return;
+    if (judgeQueue.some((q) => q.norm === norm)) return;
+    judgeQueue.push({ transcript, norm });
+    if (!judgeQueueRunning) processJudgeQueue();
+}
+
+async function processJudgeQueue() {
+    judgeQueueRunning = true;
+    while (judgeQueue.length > 0) {
+        if (!gameState?.running) break;
+        const item = judgeQueue.shift();
+        if (gameState.fallingWords.length === 0) continue;
+        const apiKey = getApiKey();
+        if (!apiKey) continue;
+
+        // Rate-limit Gemini calls here, not at the input gate
+        const wait = GEMINI_QUEUE_INTERVAL_MS - (Date.now() - judgeLastGeminiTime);
+        if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+        judgeLastGeminiTime = Date.now();
+
+        const isJaEn = gameSettings.gameMode === "ja-en";
+        try {
+            if (isJaEn) await judgeJaEn(item.transcript, apiKey);
+            else await judgeEnEn(item.transcript, apiKey);
+        } catch (_) {}
+    }
+    judgeQueueRunning = false;
+}
+
 // ---- Fuzzy word matching ----
+function normalizeTranscript(text) {
+    return text
+        .toLowerCase()
+        .replace(/['']/g, "'")
+        .replace(/i'm/g, "i am").replace(/i've/g, "i have").replace(/i'll/g, "i will").replace(/i'd/g, "i would")
+        .replace(/it's/g, "it is").replace(/that's/g, "that is").replace(/there's/g, "there is")
+        .replace(/don't/g, "do not").replace(/can't/g, "cannot").replace(/won't/g, "will not")
+        .replace(/didn't/g, "did not").replace(/isn't/g, "is not").replace(/aren't/g, "are not")
+        .replace(/\b(um|uh|er|ah|like)\b/g, "")
+        .replace(/[^\w\s]/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
 function levenshtein(a, b) {
     if (a === b) return 0;
     if (!a.length) return b.length;
@@ -3692,12 +3736,12 @@ function levenshtein(a, b) {
 }
 
 function fuzzyMatchSingle(transcript, cardText) {
-    const tLower = transcript.toLowerCase();
-    const cLower = cardText.toLowerCase();
-    if (tLower.includes(cLower)) return true;
+    const tNorm = normalizeTranscript(transcript);
+    const cNorm = normalizeTranscript(cardText);
+    if (tNorm.includes(cNorm)) return true;
 
-    const tWords = tLower.split(/\W+/).filter(Boolean);
-    const cWords = cLower.split(/\W+/).filter(Boolean);
+    const tWords = tNorm.split(/\s+/).filter(Boolean);
+    const cWords = cNorm.split(/\s+/).filter(Boolean);
 
     return cWords.every((cw) => {
         const maxDist = cw.length <= 4 ? 1 : cw.length <= 8 ? 1 : 2;
@@ -3726,28 +3770,17 @@ async function callGeminiRaw(apiKey, prompt) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
             contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: { temperature: 0.1, maxOutputTokens: 80 },
+            generationConfig: {
+                temperature: 0.1,
+                maxOutputTokens: 80,
+                responseMimeType: "application/json",
+            },
         }),
     });
-    if (!res.ok) return "";
+    if (!res.ok) return null;
     const data = await res.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
-}
-
-async function judgeWithGemini(transcript) {
-    if (!gameState || gameState.fallingWords.length === 0) return;
-    gameJudging = true;
-    const apiKey = getApiKey();
-    if (!apiKey) { gameJudging = false; return; }
-
-    const isJaEn = gameSettings.gameMode === "ja-en";
-
-    if (isJaEn) {
-        await judgeJaEn(transcript, apiKey);
-    } else {
-        await judgeEnEn(transcript, apiKey);
-    }
-    gameJudging = false;
+    const raw = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
+    try { return JSON.parse(raw); } catch (_) { return null; }
 }
 
 // EN→EN: fuzzy string match first, then Gemini for quality score
@@ -3766,11 +3799,8 @@ Sentence: "${transcript}"
 Reply with JSON only: {"score":1}`;
 
     let score = 1;
-    try {
-        const raw = await callGeminiRaw(apiKey, prompt);
-        const m = raw.match(/"score"\s*:\s*([123])/);
-        if (m) score = Number(m[1]);
-    } catch (_) {}
+    const result = await callGeminiRaw(apiKey, prompt);
+    if (result?.score >= 1 && result?.score <= 3) score = result.score;
 
     localMatches.forEach((w) => {
         if (gameState?.fallingWords.find((fw) => fw.id === w.id)) hitWord(w.id, score);
@@ -3794,11 +3824,8 @@ async function judgeJaEn(transcript, apiKey) {
 Sentence: "${transcript}"
 Reply with JSON only: {"score":1}`;
         let score = 1;
-        try {
-            const raw = await callGeminiRaw(apiKey, prompt);
-            const m = raw.match(/"score"\s*:\s*([123])/);
-            if (m) score = Number(m[1]);
-        } catch (_) {}
+        const result = await callGeminiRaw(apiKey, prompt);
+        if (result?.score >= 1 && result?.score <= 3) score = result.score;
         fastMatches.forEach((w) => {
             if (gameState?.fallingWords.find((fw) => fw.id === w.id)) hitWord(w.id, score);
         });
@@ -3808,7 +3835,7 @@ Reply with JSON only: {"score":1}`;
 
     // Slow path: ask Gemini whether each falling word matches the transcript
     setTranscript("判定中...", true);
-    const candidates = gameState.fallingWords.slice(0, 3); // limit to avoid too-long prompts
+    const candidates = gameState.fallingWords.slice(0, 3);
     const wordList = candidates.map((w, i) => `${i + 1}. "${w.text}" (registered: "${w.enText || ""}")`).join("\n");
 
     const prompt = `You are judging a Japanese-to-English translation game.
@@ -3824,28 +3851,17 @@ Reply with JSON only, listing which indices matched and the sentence quality sco
 - matches: array of 1-based indices that were correctly translated (empty array if none)
 - score: 1 (simple/correct) | 2 (natural) | 3 (complex/creative)`;
 
-    try {
-        const raw = await callGeminiRaw(apiKey, prompt);
-        const matchM = raw.match(/"matches"\s*:\s*\[([^\]]*)\]/);
-        const scoreM = raw.match(/"score"\s*:\s*([123])/);
-        const score = scoreM ? Number(scoreM[1]) : 1;
-        const indices = matchM
-            ? matchM[1].split(",").map((s) => parseInt(s.trim(), 10)).filter((n) => !isNaN(n))
-            : [];
-
-        if (indices.length === 0) {
-            setTranscript(transcript);
-            return;
-        }
-
-        indices.forEach((idx) => {
-            const w = candidates[idx - 1];
-            if (w && gameState?.fallingWords.find((fw) => fw.id === w.id)) hitWord(w.id, score);
-        });
-        setTranscript(`${"★".repeat(score)} ${transcript}`);
-    } catch (_) {
+    const result = await callGeminiRaw(apiKey, prompt);
+    if (!result || !Array.isArray(result.matches) || result.matches.length === 0) {
         setTranscript(transcript);
+        return;
     }
+    const score = (result.score >= 1 && result.score <= 3) ? result.score : 1;
+    result.matches.forEach((idx) => {
+        const w = candidates[idx - 1];
+        if (w && gameState?.fallingWords.find((fw) => fw.id === w.id)) hitWord(w.id, score);
+    });
+    setTranscript(`${"★".repeat(score)} ${transcript}`);
 }
 
 // ---- Start ----
