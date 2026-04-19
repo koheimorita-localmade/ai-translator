@@ -4,6 +4,33 @@
 
 ---
 
+### 2026-04-19 — ゲームモード多機能化・日→英モード実装 (v1.8→v2.0)
+
+**Agent**: Claude
+
+### What was done
+- **v1.8**: `"xxxx / xxxx"` 形式のカード対応（`fuzzyMatch`で`/`区切りの各候補を個別にマッチ）。ゲーム結果画面に「言えなかったワード」一覧（英語+日本語訳、例文付き）を追加。カード編集モーダルの「更新」「削除」ボタンを同幅に修正
+- **v1.9**: 学習メモ生成を`normalPromise`完了後にチェーン→訳文をプロンプトに明示することで学習メモの乖離を解消。ゲーム設定画面に★/★★/★★★スコアルール説明を追加。ミス振り返りに例文を表示
+- **v2.0**: **日→英ゲームモード実装**。`wordPool`を`{displayText, enText, jaText, example}`オブジェクトに変更。モード別判定ロジック`judgeEnEn`/`judgeJaEn`に分離。JA→ENは2段階判定：①登録英訳とのfuzzyMatch（高速パス）→②Geminiに「この英文は日本語の正しい訳か」を問い合わせ（最大3ワード一括）。`callGeminiRaw`を新設してローレベルAPI呼出を共有
+
+### Current state
+- ゲーム全機能（EN→EN / JA→EN両モード）が動作するはず（JA→ENはiOS実機未テスト）
+- 翻訳・学習モードは引き続き正常
+- v2.0時点のコード構成: `app.js`（約3800行）、`index.html`、`style.css`
+
+### Next steps
+- [ ] JA→ENモードをiOS実機でテストし判定精度を確認
+- [ ] **音声認識精度の改善**: 発音がやや悪くても意図が拾えるよう調整（Speech Recognitionの設定 or 判定ロジック側）
+- [ ] **判定レスポンスの改善**: 矢継ぎ早に発話し続けても連続して反応できるよう`gameJudging`フラグ・cooldown・debounceの見直し
+- [ ] コードレビュー（Codex）依頼：上記2点の改善案をレビューしてもらう
+
+### Open issues
+- JA→ENの「低速パス」（Gemini翻訳判定）は1〜2秒かかる。`gameJudging=true`中は次の発話が無視されるため、連続入力との相性が悪い
+- `GEMINI_COOLDOWN_MS = 1800`が連続発話のボトルネックになっている可能性
+- iOS Safari の `isFinal` 不発問題は debounce(700ms) で暫定対応中。根本解決未達
+
+---
+
 ### 2026-04-19 — ゲームモード判定改善・翻訳autoバグ修正 (v1.5→v1.7)
 
 - **Agent**: Claude
