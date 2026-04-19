@@ -1877,6 +1877,26 @@ textarea::placeholder {
     font-weight: 600;
 }
 
+.game-score-rules {
+    width: 100%;
+    background: var(--surface);
+    border-radius: 10px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    margin-bottom: 8px;
+}
+.game-score-rule {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+}
+.score-stars { width: 36px; color: #f59e0b; font-size: 12px; flex-shrink: 0; }
+.score-desc { flex: 1; color: var(--text-secondary); }
+.score-pts { font-weight: 700; color: var(--primary); flex-shrink: 0; }
+
 .game-card-count {
     font-size: 12px;
     color: var(--text-secondary);
@@ -2116,12 +2136,17 @@ textarea::placeholder {
 }
 .missed-card {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
+    flex-direction: column;
     padding: 8px 12px;
     background: var(--surface);
     border-radius: 8px;
     border-left: 3px solid #ef4444;
+    gap: 4px;
+}
+.missed-main {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
     gap: 8px;
 }
 .missed-en {
@@ -2133,6 +2158,12 @@ textarea::placeholder {
     font-size: 13px;
     color: var(--text-secondary);
     text-align: right;
+}
+.missed-example {
+    font-size: 12px;
+    color: var(--text-secondary);
+    font-style: italic;
+    padding-top: 2px;
 }
 
 .game-result-btns {

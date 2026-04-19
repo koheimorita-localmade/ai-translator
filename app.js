@@ -691,29 +691,33 @@ ${text}`;
         ? `\n\nThe user provided this situational context: "${lastContext}". Factor it into your notes — explain why the chosen phrasing fits this situation.`
         : "";
 
-    const notesPrompt = `You are a language tutor.
+    // Chain notes after normal so we can include the actual translation in the prompt
+    let notesPromise = normalPromise.then(async () => {
+        if (lastSourceText !== text) return;
+        const translation = translationCache.normal || "";
+        const translationLine = translation
+            ? `\nSource (${srcName || "input"}): ${text}\nTranslation (${resolvedTgtName}): ${translation}`
+            : `\nText: ${text}`;
 
-First translate ${langContext}, then write learning notes.${contextClause}
+        const notesPrompt = `You are a language tutor.
+
+Write learning notes for the following translation.${contextClause}
 
 ${notesInstruction}${contextForNotes}
 
-Output ONLY the notes as HTML (use <p> for paragraphs and <strong> for important terms). No other text.
+${translationLine}
 
-Text:
-${text}`;
+Output ONLY the notes as HTML (use <p> for paragraphs and <strong> for important terms). No other text.`;
 
-    let notesPromise = callGemini(apiKey, notesPrompt)
-        .then((notes) => {
-            if (lastSourceText !== text) return;
-            // Clean up any markdown fences or extra wrapping
-            const cleaned = notes.replace(/```html\s*/g, "").replace(/```\s*/g, "").trim();
-            translationCache.notes = cleaned;
-            learningNotes.innerHTML = cleaned;
-            learningSection.style.display = "block";
-        })
-        .catch(() => {
-            // Silently fail for notes — translation still works
-        });
+        const notes = await callGemini(apiKey, notesPrompt);
+        if (lastSourceText !== text) return;
+        const cleaned = notes.replace(/```html\s*/g, "").replace(/```\s*/g, "").trim();
+        translationCache.notes = cleaned;
+        learningNotes.innerHTML = cleaned;
+        learningSection.style.display = "block";
+    }).catch(() => {
+        // Silently fail for notes — translation still works
+    });
 
     // Fire-and-forget all promises (handled internally)
     Promise.allSettled([normalPromise, stylesPromise, notesPromise]);
@@ -3368,6 +3372,7 @@ async function startGame() {
         .map((c) => ({
             text: getEnglishText(c),
             jaText: c.langA === "ja" ? c.textA : c.langB === "ja" ? c.textB : "",
+            example: c.example || "",
         }))
         .filter((e) => e.text);
 
@@ -3444,7 +3449,7 @@ function spawnWord() {
     const field = document.getElementById("game-field");
     if (!field) return;
 
-    const { text, jaText } = entry;
+    const { text, jaText, example } = entry;
     const id = `w-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const el = document.createElement("div");
     el.className = "falling-word";
@@ -3457,7 +3462,7 @@ function spawnWord() {
     el.style.left = x + "px";
     el.style.top = "-50px";
 
-    gameState.fallingWords.push({ id, text, jaText, el, y: -50 });
+    gameState.fallingWords.push({ id, text, jaText, example, el, y: -50 });
     gameState.lastSpawnTime = Date.now();
 }
 
@@ -3466,7 +3471,7 @@ function missWord(word) {
     gameState.fallingWords = gameState.fallingWords.filter((w) => w.id !== word.id);
     if (word.el.parentNode) word.el.parentNode.removeChild(word.el);
     gameState.misses++;
-    gameState.missedWords.push({ text: word.text, jaText: word.jaText || "" });
+    gameState.missedWords.push({ text: word.text, jaText: word.jaText || "", example: word.example || "" });
 
     if (gameSettings.gameMissPenalty === "penalty") {
         gameState.score = Math.max(0, gameState.score - MISS_PENALTY_POINTS);
@@ -3565,8 +3570,11 @@ function endGame() {
             missedSection.style.display = "block";
             missedList.innerHTML = missed.map((w) => `
                 <div class="missed-card">
-                    <span class="missed-en">${escapeHtml(w.text)}</span>
-                    ${w.jaText ? `<span class="missed-ja">${escapeHtml(w.jaText)}</span>` : ""}
+                    <div class="missed-main">
+                        <span class="missed-en">${escapeHtml(w.text)}</span>
+                        ${w.jaText ? `<span class="missed-ja">${escapeHtml(w.jaText)}</span>` : ""}
+                    </div>
+                    ${w.example ? `<div class="missed-example">${escapeHtml(w.example)}</div>` : ""}
                 </div>
             `).join("");
         }
