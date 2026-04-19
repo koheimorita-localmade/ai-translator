@@ -3365,8 +3365,11 @@ async function startGame() {
 
     const wordPool = [...cards]
         .sort(() => Math.random() - 0.5)
-        .map((c) => getEnglishText(c))
-        .filter(Boolean);
+        .map((c) => ({
+            text: getEnglishText(c),
+            jaText: c.langA === "ja" ? c.textA : c.langB === "ja" ? c.textB : "",
+        }))
+        .filter((e) => e.text);
 
     gameState = {
         wordPool,
@@ -3376,6 +3379,7 @@ async function startGame() {
         hits: 0,
         misses: 0,
         starCounts: [0, 0, 0],
+        missedWords: [],
         timeLeft: gameSettings.gameDuration,
         running: true,
         lastSpawnTime: 0,
@@ -3434,12 +3438,13 @@ function gameLoop(timestamp) {
 // ---- Spawn ----
 function spawnWord() {
     if (!gameState) return;
-    const text = gameState.wordPool[gameState.wordIndex % gameState.wordPool.length];
+    const entry = gameState.wordPool[gameState.wordIndex % gameState.wordPool.length];
     gameState.wordIndex++;
 
     const field = document.getElementById("game-field");
     if (!field) return;
 
+    const { text, jaText } = entry;
     const id = `w-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const el = document.createElement("div");
     el.className = "falling-word";
@@ -3452,7 +3457,7 @@ function spawnWord() {
     el.style.left = x + "px";
     el.style.top = "-50px";
 
-    gameState.fallingWords.push({ id, text, el, y: -50 });
+    gameState.fallingWords.push({ id, text, jaText, el, y: -50 });
     gameState.lastSpawnTime = Date.now();
 }
 
@@ -3461,6 +3466,7 @@ function missWord(word) {
     gameState.fallingWords = gameState.fallingWords.filter((w) => w.id !== word.id);
     if (word.el.parentNode) word.el.parentNode.removeChild(word.el);
     gameState.misses++;
+    gameState.missedWords.push({ text: word.text, jaText: word.jaText || "" });
 
     if (gameSettings.gameMissPenalty === "penalty") {
         gameState.score = Math.max(0, gameState.score - MISS_PENALTY_POINTS);
@@ -3547,6 +3553,23 @@ function endGame() {
             <div class="stat-row"><span>★★ (+25点)</span><span>${s2}回</span></div>
             <div class="stat-row"><span>★ (+10点)</span><span>${s1}回</span></div>
         `;
+    }
+
+    const missedSection = document.getElementById("game-missed-section");
+    const missedList = document.getElementById("game-missed-list");
+    const missed = gameState.missedWords;
+    if (missedSection && missedList) {
+        if (missed.length === 0) {
+            missedSection.style.display = "none";
+        } else {
+            missedSection.style.display = "block";
+            missedList.innerHTML = missed.map((w) => `
+                <div class="missed-card">
+                    <span class="missed-en">${escapeHtml(w.text)}</span>
+                    ${w.jaText ? `<span class="missed-ja">${escapeHtml(w.jaText)}</span>` : ""}
+                </div>
+            `).join("");
+        }
     }
 }
 
@@ -3652,7 +3675,7 @@ function levenshtein(a, b) {
     return row[b.length];
 }
 
-function fuzzyMatch(transcript, cardText) {
+function fuzzyMatchSingle(transcript, cardText) {
     const tLower = transcript.toLowerCase();
     const cLower = cardText.toLowerCase();
     if (tLower.includes(cLower)) return true;
@@ -3661,14 +3684,18 @@ function fuzzyMatch(transcript, cardText) {
     const cWords = cLower.split(/\W+/).filter(Boolean);
 
     return cWords.every((cw) => {
-        // Max edit distance: 1 for short words, 2 for long
         const maxDist = cw.length <= 4 ? 1 : cw.length <= 8 ? 1 : 2;
         return tWords.some((tw) => {
-            // Short words: first char must agree to avoid false positives
             if (cw.length <= 4 && tw[0] !== cw[0]) return false;
             return levenshtein(cw, tw) <= maxDist;
         });
     });
+}
+
+function fuzzyMatch(transcript, cardText) {
+    // Support "aaa / bbb" alternate forms — match if ANY variant matches
+    const variants = cardText.split(/\s*\/\s*/).map((s) => s.trim()).filter(Boolean);
+    return variants.some((v) => fuzzyMatchSingle(transcript, v));
 }
 
 // ---- Gemini judgment ----

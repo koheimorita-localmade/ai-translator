@@ -2094,6 +2094,47 @@ textarea::placeholder {
 .stat-row span:first-child { color: var(--text-secondary); }
 .stat-row span:last-child { font-weight: 600; color: var(--text-primary); }
 
+/* Missed words review */
+.game-missed-section {
+    width: 100%;
+    margin-top: 4px;
+}
+.game-missed-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin: 0 0 8px;
+}
+.game-missed-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 220px;
+    overflow-y: auto;
+}
+.missed-card {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    background: var(--surface);
+    border-radius: 8px;
+    border-left: 3px solid #ef4444;
+    gap: 8px;
+}
+.missed-en {
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 15px;
+}
+.missed-ja {
+    font-size: 13px;
+    color: var(--text-secondary);
+    text-align: right;
+}
+
 .game-result-btns {
     display: flex;
     flex-direction: column;

@@ -14,7 +14,7 @@
     <div id="app">
         <!-- Header -->
         <header class="header">
-            <h1>AI翻訳 <span class="app-version">v1.7</span></h1>
+            <h1>AI翻訳 <span class="app-version">v1.8</span></h1>
             <button id="settings-btn" class="icon-btn" aria-label="設定">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <circle cx="12" cy="12" r="3"/>
@@ -277,6 +277,10 @@
                 <h2 class="game-screen-title">結果</h2>
                 <div id="game-final-score" class="game-final-score"></div>
                 <div id="game-stats" class="game-stats"></div>
+                <div id="game-missed-section" class="game-missed-section" style="display:none;">
+                    <h3 class="game-missed-title">言えなかったワード</h3>
+                    <div id="game-missed-list" class="game-missed-list"></div>
+                </div>
                 <div class="game-result-btns">
                     <button id="game-retry-btn" class="btn-primary">もう一度</button>
                     <button id="game-back-btn" class="btn-secondary">設定に戻る</button>
@@ -734,7 +738,7 @@
 
                     <div id="card-actions" style="display:flex; gap:8px; margin-top: 12px;">
                         <button id="card-update-btn" class="translate-btn" style="flex:1;">更新</button>
-                        <button id="card-delete-btn" class="translate-btn danger-btn">削除</button>
+                        <button id="card-delete-btn" class="translate-btn danger-btn" style="flex:1;">削除</button>
                     </div>
 
                     <!-- Inline delete confirmation -->
