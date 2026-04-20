@@ -50,8 +50,16 @@
 - ユーザーが「任せる」と言わない限り、勝手に実行しない
 
 ### GAS 変更
-- `apps_script/Code.gs` を変更したら、コミット後に **必ず再デプロイ手順を案内**
+- `apps_script/Code.js` を変更したら、コミット後に **clasp で即デプロイする**
 - 自動では反映されない（フロントと違う）
+
+**デプロイコマンド（1行で完結）:**
+```bash
+clasp push && clasp deploy --deploymentId AKfycby_nlACo4deB_VEuxTCv8uQWta7ifcf28RCaLk523UwMRqe2v4iCKrWz8ZEhwi7CUBD --description "vX.X 説明"
+```
+- `clasp push` → Apps Script エディタにコード反映
+- `clasp deploy` → 本番URLを同じまま新バージョンとして公開
+- `.clasp.json` の `scriptId` と `rootDir: "apps_script"` は設定済み・ログイン済み
 
 ### 文脈の保存
 - 重要な意思決定（「○○方式を採用」「○○は不可能と判明」等）は
