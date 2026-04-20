@@ -1816,18 +1816,18 @@ function renderDeckFilterChips(containerId, selectedFilter, onChange) {
 function renderAllDeckFilters() {
     renderDeckFilterChips("cards-deck-filter", cardsDeckFilter, (f) => {
         cardsDeckFilter = f;
-        renderDeckFilterChips("cards-deck-filter", cardsDeckFilter, (f2) => { cardsDeckFilter = f2; renderCards(); });
         renderCards();
+        renderAllDeckFilters();
     });
     renderDeckFilterChips("game-deck-filter", gameDeckFilter, (f) => {
         gameDeckFilter = f;
-        renderDeckFilterChips("game-deck-filter", gameDeckFilter, (f2) => { gameDeckFilter = f2; renderGameSetup(); });
         renderGameSetup();
+        renderAllDeckFilters();
     });
     renderDeckFilterChips("study-deck-filter", studyDeckFilter, (f) => {
         studyDeckFilter = f;
-        renderDeckFilterChips("study-deck-filter", studyDeckFilter, (f2) => { studyDeckFilter = f2; updateStudyStats(); });
         updateStudyStats();
+        renderAllDeckFilters();
     });
 }
 
