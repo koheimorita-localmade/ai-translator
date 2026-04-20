@@ -162,7 +162,9 @@ const cardsSelectionBar = document.getElementById("cards-selection-bar");
 const cardsSelectedCount = document.getElementById("cards-selected-count");
 const cardsSelectAllBtn = document.getElementById("cards-select-all");
 const cardsBulkDeleteBtn = document.getElementById("cards-bulk-delete");
+const cardsBulkMoveDeckBtn = document.getElementById("cards-bulk-move-deck");
 const cardsSelectionCancelBtn = document.getElementById("cards-selection-cancel");
+const cardsDeckManageBtn = document.getElementById("cards-deck-manage-btn");
 
 // Save modal
 const saveModal = document.getElementById("save-modal");
@@ -197,6 +199,8 @@ const editLangB = document.getElementById("edit-lang-b");
 const editTextA = document.getElementById("edit-text-a");
 const editTextB = document.getElementById("edit-text-b");
 const editStyleInput = document.getElementById("edit-style");
+const editDeckSelect = document.getElementById("edit-deck");
+const editDeckNewBtn = document.getElementById("edit-deck-new-btn");
 const editSpeakA = document.getElementById("edit-speak-a");
 const editSpeakB = document.getElementById("edit-speak-b");
 const cardMetaInfo = document.getElementById("card-meta-info");
@@ -228,9 +232,10 @@ let lastDetectedSrcLang = null;
 let lastContext = ""; // user-supplied context/situation
 
 // DB local cache
-let cardsCache = []; // [{ id, pairKey, langA, textA, langB, textB, style, createdAt }]
+let cardsCache = []; // [{ id, pairKey, langA, textA, langB, textB, style, createdAt, deck }]
 let scoresCache = []; // [{ pairId, direction, easeFactor, interval, nextReview, lastReviewed, repetitions }]
 let inboxCache = []; // [{ id, text, srcLang, note, source, createdAt, processed }]
+let decksCache = []; // [{ id, name, createdAt }]
 
 // When saving from an inbox item, store the item so we can delete it after save
 let pendingInboxItem = null;
@@ -246,6 +251,11 @@ let cardsSelectedIds = new Set();
 let inboxSelectMode = false;
 let inboxSelectedIds = new Set();
 
+// Deck filter state: null = all selected
+let cardsDeckFilter = null; // Set<id> | null
+let gameDeckFilter = null;  // Set<id> | null
+let studyDeckFilter = null; // Set<id> | null
+
 // ---- Init ----
 function init() {
     loadApiKey();
@@ -258,6 +268,7 @@ function init() {
     updateTranslateButton();
     // Fetch cards on load if GAS is configured
     if (getGasUrl()) fetchAllFromDb().catch(() => {});
+    renderAllDeckFilters();
     // Handle ?capture=... URL parameter for quick translate + inbox from Alfred etc.
     handleCaptureFromURL();
     initGame();
@@ -350,6 +361,8 @@ function bindEvents() {
     cardsSelectionCancelBtn.addEventListener("click", () => toggleCardsSelectMode(false));
     cardsSelectAllBtn.addEventListener("click", selectAllVisibleCards);
     cardsBulkDeleteBtn.addEventListener("click", bulkDeleteCards);
+    cardsBulkMoveDeckBtn.addEventListener("click", openBulkMoveDeckModal);
+    cardsDeckManageBtn.addEventListener("click", openDeckManageModal);
 
     // Inbox view
     inboxRefreshBtn.addEventListener("click", () => fetchAllFromDb(true));
@@ -368,6 +381,7 @@ function bindEvents() {
     editSpeakA.addEventListener("click", () => speakFromEdit("a"));
     editSpeakB.addEventListener("click", () => speakFromEdit("b"));
     editRegenerateBtn.addEventListener("click", () => regeneratePosExampleForEdit());
+    editDeckNewBtn.addEventListener("click", () => promptNewDeckFromEdit());
 
     // Save modal: regenerate POS/example
     saveRegenerateBtn.addEventListener("click", () => generatePosExampleForSave({ force: true }));
@@ -1279,9 +1293,11 @@ async function fetchAllFromDb(showFeedback = false) {
         cardsCache = data.pairs || [];
         scoresCache = data.scores || [];
         inboxCache = data.inbox || [];
+        decksCache = data.decks || [];
         if (cardsView.style.display !== "none") renderCards();
         if (inboxView && inboxView.style.display !== "none") renderInbox();
         updateInboxBadge();
+        renderAllDeckFilters();
         if (showFeedback) showToast(`${cardsCache.length} 件のカードを取得しました`);
     } catch (error) {
         if (showFeedback) showToast(`取得失敗: ${error.message}`);
@@ -1298,6 +1314,18 @@ async function dbUpdatePair(pair) {
 
 async function dbDeletePair(id) {
     return gasPost("deletePair", { id });
+}
+
+async function dbSaveDeck(deck) {
+    return gasPost("saveDeck", { deck });
+}
+
+async function dbUpdateDeck(deck) {
+    return gasPost("updateDeck", { deck });
+}
+
+async function dbDeleteDeck(id) {
+    return gasPost("deleteDeck", { id });
 }
 
 // ============================================================
@@ -1716,10 +1744,304 @@ async function confirmExtractSave() {
 // Cards View
 // ============================================================
 
+// ============================================================
+// Deck System
+// ============================================================
+
+const DECK_UNASSIGNED_ID = "";
+const DECK_UNASSIGNED_NAME = "未分類";
+
+function getDeckName(deckId) {
+    if (!deckId) return DECK_UNASSIGNED_NAME;
+    const d = decksCache.find((d) => d.id === deckId);
+    return d ? d.name : DECK_UNASSIGNED_NAME;
+}
+
+function getDeckCardCount(deckId) {
+    return cardsCache.filter((c) => (c.deck || "") === (deckId || "")).length;
+}
+
+// Build sorted deck list with "未分類" always first
+function getDecksWithUnassigned() {
+    const list = [{ id: "", name: DECK_UNASSIGNED_NAME }];
+    const sorted = [...decksCache].sort((a, b) => a.name.localeCompare(b.name));
+    return list.concat(sorted);
+}
+
+// Render chip-based deck filter into a container element.
+// selectedFilter: Set<id> | null (null = all)
+// onChange: (newFilter: Set<id> | null) => void
+function renderDeckFilterChips(containerId, selectedFilter, onChange) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.innerHTML = "";
+
+    const decks = getDecksWithUnassigned();
+    const allSelected = selectedFilter === null;
+
+    const allChip = document.createElement("button");
+    allChip.className = "deck-chip" + (allSelected ? " active" : "");
+    allChip.textContent = "すべて";
+    allChip.addEventListener("click", () => onChange(null));
+    container.appendChild(allChip);
+
+    decks.forEach((d) => {
+        const count = getDeckCardCount(d.id);
+        if (count === 0 && d.id !== "") return; // hide empty named decks; always show 未分類
+        const chip = document.createElement("button");
+        const isActive = !allSelected && selectedFilter.has(d.id);
+        chip.className = "deck-chip" + (isActive ? " active" : "");
+        chip.textContent = `${d.name} (${count})`;
+        chip.addEventListener("click", () => {
+            if (allSelected) {
+                // Switch from all → only this deck
+                onChange(new Set([d.id]));
+            } else {
+                const next = new Set(selectedFilter);
+                if (next.has(d.id)) {
+                    next.delete(d.id);
+                    onChange(next.size === 0 ? null : next);
+                } else {
+                    next.add(d.id);
+                    // If all decks selected, revert to null (all)
+                    const totalDecks = decks.filter((x) => getDeckCardCount(x.id) > 0 || x.id === "").length;
+                    onChange(next.size >= totalDecks ? null : next);
+                }
+            }
+        });
+        container.appendChild(chip);
+    });
+}
+
+function renderAllDeckFilters() {
+    renderDeckFilterChips("cards-deck-filter", cardsDeckFilter, (f) => {
+        cardsDeckFilter = f;
+        renderDeckFilterChips("cards-deck-filter", cardsDeckFilter, (f2) => { cardsDeckFilter = f2; renderCards(); });
+        renderCards();
+    });
+    renderDeckFilterChips("game-deck-filter", gameDeckFilter, (f) => {
+        gameDeckFilter = f;
+        renderDeckFilterChips("game-deck-filter", gameDeckFilter, (f2) => { gameDeckFilter = f2; renderGameSetup(); });
+        renderGameSetup();
+    });
+    renderDeckFilterChips("study-deck-filter", studyDeckFilter, (f) => {
+        studyDeckFilter = f;
+        renderDeckFilterChips("study-deck-filter", studyDeckFilter, (f2) => { studyDeckFilter = f2; updateStudyStats(); });
+        updateStudyStats();
+    });
+}
+
+function filterByDeck(cards, deckFilter) {
+    if (deckFilter === null) return cards;
+    return cards.filter((c) => deckFilter.has(c.deck || ""));
+}
+
+// ---- Deck edit select ----
+function populateEditDeckSelect(currentDeckId) {
+    editDeckSelect.innerHTML = "";
+    getDecksWithUnassigned().forEach((d) => {
+        const opt = document.createElement("option");
+        opt.value = d.id;
+        opt.textContent = d.name;
+        if ((currentDeckId || "") === d.id) opt.selected = true;
+        editDeckSelect.appendChild(opt);
+    });
+}
+
+async function promptNewDeckFromEdit() {
+    const name = prompt("新しいデッキ名を入力してください:");
+    if (!name || !name.trim()) return;
+    const trimmed = name.trim();
+    if (decksCache.find((d) => d.name === trimmed)) {
+        showToast("同名のデッキが既に存在します");
+        return;
+    }
+    try {
+        const res = await dbSaveDeck({ name: trimmed });
+        decksCache.push({ id: res.id, name: trimmed, createdAt: new Date().toISOString() });
+        const card = cardsCache.find((c) => c.id === currentEditingCardId);
+        populateEditDeckSelect(res.id);
+        renderAllDeckFilters();
+        showToast(`デッキ「${trimmed}」を作成しました`);
+    } catch (e) {
+        showToast(`作成失敗: ${e.message}`);
+    }
+}
+
+// ---- Deck Management Modal ----
+function openDeckManageModal() {
+    renderDeckManageList();
+    document.getElementById("deck-manage-modal").style.display = "flex";
+    document.getElementById("deck-new-name").value = "";
+    document.getElementById("deck-manage-status").textContent = "";
+    document.getElementById("deck-manage-modal").querySelector(".modal-backdrop")
+        .addEventListener("click", closeDeckManageModal, { once: true });
+    document.getElementById("close-deck-manage").onclick = closeDeckManageModal;
+    document.getElementById("deck-add-btn").onclick = addDeckFromManage;
+    document.getElementById("deck-new-name").onkeydown = (e) => { if (e.key === "Enter") addDeckFromManage(); };
+}
+
+function closeDeckManageModal() {
+    document.getElementById("deck-manage-modal").style.display = "none";
+}
+
+function renderDeckManageList() {
+    const list = document.getElementById("deck-manage-list");
+    const decks = [...decksCache].sort((a, b) => a.name.localeCompare(b.name));
+    if (decks.length === 0) {
+        list.innerHTML = `<p style="color:var(--text-secondary); text-align:center; padding:16px 0;">デッキがまだありません</p>`;
+        return;
+    }
+    list.innerHTML = "";
+    decks.forEach((d) => {
+        const count = getDeckCardCount(d.id);
+        const row = document.createElement("div");
+        row.className = "deck-manage-row";
+        row.innerHTML = `
+            <span class="deck-manage-name">${escapeHtml(d.name)}</span>
+            <span class="deck-manage-count">${count}枚</span>
+            <button class="icon-btn deck-rename-btn" aria-label="名前変更" data-id="${escapeHtml(d.id)}">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                </svg>
+            </button>
+            <button class="icon-btn deck-delete-btn" aria-label="削除" data-id="${escapeHtml(d.id)}" data-name="${escapeHtml(d.name)}" data-count="${count}">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="3 6 5 6 21 6"/>
+                    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                    <path d="M10 11v6M14 11v6"/>
+                    <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                </svg>
+            </button>
+        `;
+        row.querySelector(".deck-rename-btn").addEventListener("click", () => renameDeck(d.id, d.name));
+        row.querySelector(".deck-delete-btn").addEventListener("click", () => deleteDeckWithConfirm(d.id, d.name, count));
+        list.appendChild(row);
+    });
+}
+
+async function addDeckFromManage() {
+    const nameInput = document.getElementById("deck-new-name");
+    const statusEl = document.getElementById("deck-manage-status");
+    const name = nameInput.value.trim();
+    if (!name) return;
+    if (decksCache.find((d) => d.name === name)) {
+        statusEl.textContent = "同名のデッキが既に存在します";
+        return;
+    }
+    try {
+        const res = await dbSaveDeck({ name });
+        decksCache.push({ id: res.id, name, createdAt: new Date().toISOString() });
+        nameInput.value = "";
+        statusEl.textContent = "";
+        renderDeckManageList();
+        renderAllDeckFilters();
+        showToast(`デッキ「${name}」を作成しました`);
+    } catch (e) {
+        statusEl.textContent = `作成失敗: ${e.message}`;
+    }
+}
+
+async function renameDeck(id, currentName) {
+    const newName = prompt(`デッキ名を変更します\n現在: ${currentName}\n\n新しい名前:`, currentName);
+    if (!newName || newName.trim() === currentName) return;
+    const trimmed = newName.trim();
+    if (decksCache.find((d) => d.name === trimmed && d.id !== id)) {
+        showToast("同名のデッキが既に存在します");
+        return;
+    }
+    try {
+        await dbUpdateDeck({ id, name: trimmed });
+        const d = decksCache.find((d) => d.id === id);
+        if (d) d.name = trimmed;
+        renderDeckManageList();
+        renderAllDeckFilters();
+        showToast("名前を変更しました");
+    } catch (e) {
+        showToast(`変更失敗: ${e.message}`);
+    }
+}
+
+async function deleteDeckWithConfirm(id, name, count) {
+    const msg = count > 0
+        ? `デッキ「${name}」を削除しますか？\n\n${count}枚のカードは「未分類」になります。`
+        : `デッキ「${name}」を削除しますか？`;
+    if (!confirm(msg)) return;
+    try {
+        await dbDeleteDeck(id);
+        // Move cards in this deck to unassigned
+        const affected = cardsCache.filter((c) => c.deck === id);
+        for (const c of affected) {
+            c.deck = "";
+            await dbUpdatePair({ id: c.id, deck: "" });
+        }
+        decksCache = decksCache.filter((d) => d.id !== id);
+        renderDeckManageList();
+        renderAllDeckFilters();
+        renderCards();
+        showToast(`デッキ「${name}」を削除しました`);
+    } catch (e) {
+        showToast(`削除失敗: ${e.message}`);
+    }
+}
+
+// ---- Bulk deck change ----
+function openBulkMoveDeckModal() {
+    const n = cardsSelectedIds.size;
+    if (n === 0) return;
+    document.getElementById("deck-bulk-desc").textContent = `${n}枚のカードのデッキを変更`;
+    renderBulkDeckList();
+    document.getElementById("deck-bulk-modal").style.display = "flex";
+    document.getElementById("deck-bulk-status").textContent = "";
+    document.getElementById("deck-bulk-modal").querySelector(".modal-backdrop")
+        .addEventListener("click", closeBulkMoveDeckModal, { once: true });
+    document.getElementById("close-deck-bulk").onclick = closeBulkMoveDeckModal;
+}
+
+function closeBulkMoveDeckModal() {
+    document.getElementById("deck-bulk-modal").style.display = "none";
+}
+
+function renderBulkDeckList() {
+    const list = document.getElementById("deck-bulk-list");
+    list.innerHTML = "";
+    getDecksWithUnassigned().forEach((d) => {
+        const row = document.createElement("div");
+        row.className = "deck-manage-row deck-bulk-option";
+        row.innerHTML = `
+            <span class="deck-manage-name">${escapeHtml(d.name)}</span>
+            <span class="deck-manage-count">${getDeckCardCount(d.id)}枚</span>
+        `;
+        row.addEventListener("click", () => bulkAssignDeck(d.id, d.name));
+        list.appendChild(row);
+    });
+}
+
+async function bulkAssignDeck(deckId, deckName) {
+    const ids = [...cardsSelectedIds];
+    const statusEl = document.getElementById("deck-bulk-status");
+    statusEl.textContent = "変更中...";
+    let done = 0;
+    for (const id of ids) {
+        try {
+            await dbUpdatePair({ id, deck: deckId });
+            const c = cardsCache.find((c) => c.id === id);
+            if (c) c.deck = deckId;
+            done++;
+        } catch (_) {}
+    }
+    closeBulkMoveDeckModal();
+    toggleCardsSelectMode(false);
+    renderCards();
+    renderAllDeckFilters();
+    showToast(`${done}枚を「${deckName}」に移動しました`);
+}
+
 function renderCards() {
     const query = (cardsSearch.value || "").trim().toLowerCase();
 
-    let filtered = cardsCache;
+    let filtered = filterByDeck(cardsCache, cardsDeckFilter);
     if (query) {
         filtered = filtered.filter((c) =>
             (c.textA || "").toLowerCase().includes(query) ||
@@ -1846,6 +2168,7 @@ function updateCardsSelectionUI() {
     const n = cardsSelectedIds.size;
     cardsSelectedCount.textContent = `${n}件選択中`;
     cardsBulkDeleteBtn.disabled = n === 0;
+    cardsBulkMoveDeckBtn.disabled = n === 0;
 }
 
 async function bulkDeleteCards() {
@@ -1904,6 +2227,7 @@ function openCardEdit(card, opts = {}) {
     editTextB.value = card.textB || "";
     editStyleInput.value = card.style || "";
     editContextInput.value = card.context || "";
+    populateEditDeckSelect(card.deck || "");
     editPosInput.value = card.partOfSpeech || "";
     editExampleInput.value = card.example || "";
 
@@ -2156,6 +2480,7 @@ async function confirmUpdateCard() {
     const context = editContextInput.value.trim();
     const partOfSpeech = editPosInput.value.trim();
     const example = editExampleInput.value.trim();
+    const deck = editDeckSelect ? editDeckSelect.value : "";
     if (!textA || !textB) {
         cardEditStatus.textContent = "両方のテキストを入力してください";
         cardEditStatus.className = "key-status error";
@@ -2167,7 +2492,7 @@ async function confirmUpdateCard() {
     cardEditStatus.className = "key-status";
 
     try {
-        await dbUpdatePair({ id: currentEditingCardId, textA, textB, style, context, partOfSpeech, example });
+        await dbUpdatePair({ id: currentEditingCardId, textA, textB, style, context, partOfSpeech, example, deck });
         // Update local cache
         const card = cardsCache.find((c) => c.id === currentEditingCardId);
         if (card) {
@@ -2177,6 +2502,7 @@ async function confirmUpdateCard() {
             card.context = context;
             card.partOfSpeech = partOfSpeech;
             card.example = example;
+            card.deck = deck;
         }
         renderCards();
         cardEditStatus.textContent = "更新しました";
@@ -2285,7 +2611,8 @@ function sm2Update(prev, quality) {
 
 // Cards by pair and learning status
 function getCardsByPair(pairKey) {
-    return cardsCache.filter((c) => c.pairKey === pairKey);
+    const cards = cardsCache.filter((c) => c.pairKey === pairKey);
+    return filterByDeck(cards, studyDeckFilter);
 }
 
 function isDue(score) {
@@ -3342,6 +3669,7 @@ function getGameCards() {
         if (c.langA !== "en" && c.langB !== "en") return false;
         return (c.partOfSpeech || "") !== "文";
     });
+    cards = filterByDeck(cards, gameDeckFilter);
     if (gameSettings.gameCardFilter === "due") {
         cards = cards.filter((c) => {
             const s = scoresCache.find((sc) => sc.pairId === c.id);

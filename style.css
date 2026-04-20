@@ -2201,3 +2201,95 @@ textarea::placeholder {
     -webkit-tap-highlight-color: transparent;
 }
 
+
+/* ============================================================
+   Deck System
+   ============================================================ */
+
+.deck-filter-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 4px 0 2px;
+}
+
+.deck-chip {
+    padding: 4px 10px;
+    border-radius: 20px;
+    border: 1.5px solid var(--border-color);
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    font-size: 12px;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.deck-chip.active {
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary);
+}
+
+/* Card edit deck selector */
+.deck-select-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.deck-select {
+    flex: 1;
+}
+
+/* Deck management modal */
+.deck-manage-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 16px;
+    max-height: 280px;
+    overflow-y: auto;
+}
+
+.deck-manage-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: var(--bg-secondary);
+}
+
+.deck-manage-name {
+    flex: 1;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.deck-manage-count {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-right: 4px;
+}
+
+.deck-bulk-option {
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.deck-bulk-option:active {
+    background: var(--border-color);
+}
+
+.deck-add-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+.deck-bulk-desc {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 12px;
+}

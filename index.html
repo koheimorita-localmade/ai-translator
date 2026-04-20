@@ -249,6 +249,11 @@
                     </div>
                 </div>
 
+                <div class="game-setting-group">
+                    <div class="game-setting-label">デッキ</div>
+                    <div id="game-deck-filter" class="deck-filter-row"></div>
+                </div>
+
                 <div class="game-score-rules">
                     <div class="game-score-rule"><span class="score-stars">★</span><span class="score-desc">シンプルな文（正しければOK）</span><span class="score-pts">+10点</span></div>
                     <div class="game-score-rule"><span class="score-stars">★★</span><span class="score-desc">自然な語彙・文法</span><span class="score-pts">+25点</span></div>
@@ -305,6 +310,11 @@
                 <div class="form-group">
                     <label for="study-pair">言語ペア</label>
                     <select id="study-pair" class="pair-select"></select>
+                </div>
+
+                <div class="form-group">
+                    <label>デッキ</label>
+                    <div id="study-deck-filter" class="deck-filter-row"></div>
                 </div>
 
                 <div class="form-group">
@@ -456,6 +466,7 @@
                 <div class="cards-stats">
                     <span id="cards-count" class="cards-count">0 件</span>
                     <div class="header-actions">
+                        <button id="cards-deck-manage-btn" class="text-btn">デッキ管理</button>
                         <button id="cards-select-toggle" class="text-btn">選択</button>
                         <button id="cards-refresh-btn" class="icon-btn" aria-label="更新">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -465,10 +476,12 @@
                     </div>
                 </div>
                 <input type="search" id="cards-search" class="cards-search" placeholder="検索...">
+                <div id="cards-deck-filter" class="deck-filter-row"></div>
                 <div id="cards-selection-bar" class="selection-bar" style="display:none;">
                     <span id="cards-selected-count" class="selection-count">0件選択中</span>
                     <div class="selection-actions">
                         <button id="cards-select-all" class="text-btn">全選択</button>
+                        <button id="cards-bulk-move-deck" class="text-btn" disabled>デッキ変更</button>
                         <button id="cards-bulk-delete" class="selection-delete-btn" disabled>削除</button>
                         <button id="cards-selection-cancel" class="text-btn">キャンセル</button>
                     </div>
@@ -721,6 +734,14 @@
                     </div>
 
                     <div class="form-group">
+                        <label for="edit-deck">デッキ</label>
+                        <div class="deck-select-row">
+                            <select id="edit-deck" class="simple-input deck-select"></select>
+                            <button id="edit-deck-new-btn" class="text-btn small-text-btn" type="button">+ 新規</button>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
                         <label>文脈・補足</label>
                         <textarea id="edit-context" rows="2" class="save-context-field" placeholder="どんな場面で使った表現か (任意)"></textarea>
                     </div>
@@ -761,6 +782,49 @@
             </div>
         </div>
     </div>
+
+        <!-- Deck Management Modal -->
+        <div id="deck-manage-modal" class="modal" style="display:none;">
+            <div class="modal-backdrop"></div>
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>デッキ管理</h2>
+                    <button id="close-deck-manage" class="icon-btn" aria-label="閉じる">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M18 6L6 18M6 6l12 12"/>
+                        </svg>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div id="deck-manage-list" class="deck-manage-list"></div>
+                    <div class="deck-add-row">
+                        <input type="text" id="deck-new-name" class="simple-input" placeholder="新しいデッキ名..." maxlength="30">
+                        <button id="deck-add-btn" class="translate-btn" style="white-space:nowrap;">追加</button>
+                    </div>
+                    <p id="deck-manage-status" class="key-status"></p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bulk Deck Change Modal -->
+        <div id="deck-bulk-modal" class="modal" style="display:none;">
+            <div class="modal-backdrop"></div>
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>デッキを変更</h2>
+                    <button id="close-deck-bulk" class="icon-btn" aria-label="閉じる">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M18 6L6 18M6 6l12 12"/>
+                        </svg>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <p id="deck-bulk-desc" class="deck-bulk-desc"></p>
+                    <div id="deck-bulk-list" class="deck-manage-list"></div>
+                    <p id="deck-bulk-status" class="key-status"></p>
+                </div>
+            </div>
+        </div>
 
     <script src="app.js"></script>
 </body>
